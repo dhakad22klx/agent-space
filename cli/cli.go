@@ -1,6 +1,7 @@
 package cli
 
 import (
+	tui "agent-harness/cli/tui"
 	"bufio"
 	"fmt"
 	"os"
@@ -10,11 +11,11 @@ import (
 func StartCli() {
 	// Create a scanner to read from standard input
 	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Println("Welcome to the Agent-Space! Your personal AI assistant")
+	fmt.Println(tui.Blue("Welcome to the Agent-Space! Your personal AI assistant"))
 
 	for {
 		// Print a custom terminal prompt symbol
-		fmt.Print("agent-space> ")
+		fmt.Print(tui.Magenta("agent-space> "))
 
 		// Read input
 		if !scanner.Scan() {
@@ -28,12 +29,12 @@ func StartCli() {
 		case "":
 			continue
 		case "exit":
-			fmt.Println("Goodbye!")
+			fmt.Println(tui.Red("Goodbye!"))
 			return
 		case "help":
 			fmt.Println("Available commands: help, exit")
 		default:
-			fmt.Printf("Available information: %s\n", input)
+			fmt.Printf(tui.Green("Available information: %s\n"), input)
 		}
 	}
 
