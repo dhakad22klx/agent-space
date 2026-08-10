@@ -15,7 +15,7 @@ func StartCli() {
 
 	for {
 		// Print a custom terminal prompt symbol
-		fmt.Print(tui.Magenta("agent-space> "))
+		fmt.Print(tui.Magenta("agent-space>"))
 
 		// Read input
 		if !scanner.Scan() {
