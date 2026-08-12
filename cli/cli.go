@@ -13,40 +13,27 @@ import (
 	"strings"
 )
 
+// StartCli runs the read-prompt-answer loop until the user leaves.
 func StartCli() {
 	ctx := context.Background()
-
-	// Create a scanner to read from standard input
 	scanner := bufio.NewScanner(os.Stdin)
+
 	fmt.Println(tui.Blue("Welcome to the Agent-Space! Your personal AI assistant"))
 
-	// Set up the model provider; the prompt still works without it
-	gemini, err := providers.NewGemini(ctx)
+	// The prompt still works without a provider; only answering needs one.
+	assistant, err := newAgent(newProvider(ctx))
 	if err != nil {
-		fmt.Println(tui.Red("gemini unavailable: " + err.Error()))
-	} else {
-		fmt.Println(tui.Gray("model: " + gemini.Model()))
-	}
-
-	// Give the agent its tools and print each call as it happens
-	assistant, err := newAgent(gemini)
-	if err != nil {
-		fmt.Println(tui.Red("tools unavailable: " + err.Error()))
+		fmt.Println(tui.Red("agent unavailable: " + err.Error()))
 	}
 
 	for {
-		// Print a custom terminal prompt symbol
 		fmt.Print(tui.Magenta("agent-space>"))
 
-		// Read input
 		if !scanner.Scan() {
 			break
 		}
 
-		input := strings.TrimSpace(scanner.Text())
-
-		// Process input/commands
-		switch input {
+		switch input := strings.TrimSpace(scanner.Text()); input {
 		case "":
 			continue
 		case "exit":
@@ -60,18 +47,7 @@ func StartCli() {
 			}
 			fmt.Println(tui.Gray("conversation cleared"))
 		default:
-			if assistant == nil {
-				fmt.Println(tui.Red("cannot answer: the agent is not configured"))
-				continue
-			}
-
-			answer, err := assistant.Run(ctx, input)
-			if err != nil {
-				fmt.Println(tui.Red("error: " + err.Error()))
-				continue
-			}
-
-			fmt.Println(tui.Green(answer))
+			answer(ctx, assistant, input)
 		}
 	}
 
@@ -80,10 +56,23 @@ func StartCli() {
 	}
 }
 
-// newAgent assembles the agent: the model provider, the tools it may call and
-// the trace printed while it works.
-func newAgent(gemini *providers.Gemini) (*agent.Agent, error) {
-	if gemini == nil {
+// newProvider picks the model provider to run with, or nil when none is
+// configured. Returning the interface keeps the rest of the CLI vendor-neutral.
+func newProvider(ctx context.Context) providers.IProvider {
+	gemini, err := providers.NewGemini(ctx)
+	if err != nil {
+		fmt.Println(tui.Red("gemini unavailable: " + err.Error()))
+		return nil
+	}
+
+	fmt.Println(tui.Gray("model: " + gemini.Model()))
+
+	return gemini
+}
+
+// newAgent gives the agent its tools and the trace printed while it works.
+func newAgent(provider providers.IProvider) (*agent.Agent, error) {
+	if provider == nil {
 		return nil, nil
 	}
 
@@ -92,7 +81,7 @@ func newAgent(gemini *providers.Gemini) (*agent.Agent, error) {
 		return nil, err
 	}
 
-	assistant := agent.New(gemini, tools.NewRegistry(readFile))
+	assistant := agent.New(provider, tools.NewRegistry(readFile))
 	assistant.OnToolCall = func(call providers.ToolCall, result providers.ToolResult) {
 		fmt.Println(tui.Gray(fmt.Sprintf("· %s(%s)", call.Name, formatArgs(call.Args))))
 		if result.IsError {
@@ -101,6 +90,22 @@ func newAgent(gemini *providers.Gemini) (*agent.Agent, error) {
 	}
 
 	return assistant, nil
+}
+
+// answer runs one prompt through the agent and prints the result.
+func answer(ctx context.Context, assistant *agent.Agent, input string) {
+	if assistant == nil {
+		fmt.Println(tui.Red("cannot answer: the agent is not configured"))
+		return
+	}
+
+	reply, err := assistant.Run(ctx, input)
+	if err != nil {
+		fmt.Println(tui.Red("error: " + err.Error()))
+		return
+	}
+
+	fmt.Println(tui.Green(reply))
 }
 
 // formatArgs renders tool arguments compactly for the trace line.

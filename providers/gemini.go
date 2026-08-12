@@ -12,48 +12,13 @@ import (
 	"google.golang.org/genai"
 )
 
-// Roles used in the conversation history an agent keeps.
-const (
-	RoleUser  = "user"  // something the person typed
-	RoleModel = "model" // what the model answered, text and/or tool calls
-	RoleTool  = "tool"  // the outputs of the tools the model asked for
-)
-
-// Message is one entry in the conversation history. A model message carries
-// text, tool calls, or both; a tool message carries one result per call.
-type Message struct {
-	Role        string
-	Text        string
-	ToolCalls   []ToolCall
-	ToolResults []ToolResult
-
-	// raw is the model turn exactly as Gemini sent it. Gemini requires the
-	// thought signature that comes with a function call to be echoed back
-	// untouched, so a replayed model turn uses this instead of being rebuilt
-	// from the fields above.
-	raw *genai.Content
-}
-
-// ToolCall is the model asking for one tool to be run.
-type ToolCall struct {
-	ID   string
-	Name string
-	Args map[string]any
-}
-
-// ToolResult is what running a ToolCall produced.
-type ToolResult struct {
-	ID      string
-	Name    string
-	Output  string
-	IsError bool
-}
-
 // Gemini talks to the Gemini API through the official genai SDK.
 type Gemini struct {
 	client *genai.Client
 	model  string
 }
+
+var _ IProvider = (*Gemini)(nil)
 
 // NewGemini builds a provider from the GEMINI_API_KEY and GEMINI_MODEL
 // entries in .env.
@@ -163,10 +128,10 @@ func contents(history []Message) []*genai.Content {
 	for _, msg := range history {
 		switch msg.Role {
 		case RoleModel:
-			// Replay the model's own turn when we still have it, so thought
-			// signatures and part order survive the round trip.
-			if msg.raw != nil {
-				content := *msg.raw
+			// Replay the turn Gemini sent, so thought signatures and part order
+			// survive the round trip.
+			if raw, ok := msg.raw.(*genai.Content); ok && raw != nil {
+				content := *raw
 				if content.Role == "" {
 					content.Role = string(genai.RoleModel)
 				}

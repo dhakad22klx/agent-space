@@ -32,27 +32,21 @@ which may hold private data the user did not ask to see.`
 // forever.
 const defaultMaxSteps = 10
 
-// Provider is the model half of the loop: given the conversation so far and the
-// tools on offer, it replies with text, tool calls, or both.
-type Provider interface {
-	Chat(ctx context.Context, system string, history []providers.Message, schemas []tools.Schema) (providers.Message, error)
-}
-
 // Agent runs the ask-model / run-tools / ask-again loop and keeps the
 // conversation history across turns.
 type Agent struct {
-	provider Provider
+	provider providers.IProvider
 	tools    *tools.Registry
 	history  []providers.Message
 	maxSteps int
 
-	// OnToolCall, when set, is invoked after each tool run so the UI can show
-	// what the agent is doing.
+	// OnToolCall, when set, runs after each tool call so the UI can show what
+	// the agent is doing.
 	OnToolCall func(call providers.ToolCall, result providers.ToolResult)
 }
 
 // New builds an agent over a provider and the tools it is allowed to use.
-func New(provider Provider, registry *tools.Registry) *Agent {
+func New(provider providers.IProvider, registry *tools.Registry) *Agent {
 	return &Agent{
 		provider: provider,
 		tools:    registry,
