@@ -1,2 +1,2 @@
 # agent-space
-Agent Harness -Golang.
+Agent Harness - Golang.
