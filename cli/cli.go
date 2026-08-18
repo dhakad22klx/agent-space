@@ -78,12 +78,7 @@ func newAgent(out *tui.Output, provider providers.IProvider) (*agent.Agent, erro
 		return nil, nil
 	}
 
-	readFile, err := tools.NewReadFile()
-	if err != nil {
-		return nil, err
-	}
-
-	assistant := agent.New(provider, tools.NewRegistry(readFile, tools.NewRunBash()))
+	assistant := agent.New(provider, tools.NewRegistry(tools.NewRunBash()))
 	assistant.OnToolCall = func(call providers.ToolCall, result providers.ToolResult) {
 		out.Tracef("· %s(%s)", call.Name, formatArgs(call.Args))
 		if result.IsError {
