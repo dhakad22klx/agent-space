@@ -5,19 +5,22 @@ import (
 	tui "agent-harness/cli/tui"
 	providers "agent-harness/providers"
 	tools "agent-harness/tools"
-	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 )
+
+// prompt keeps its trailing space because the reader redraws it verbatim on
+// every keystroke.
+const prompt = "agent-space>"
 
 // StartCli runs the read-prompt-answer loop until the user leaves. Nothing here
 // writes to a stream directly: out owns every byte the CLI produces.
 func StartCli() {
 	ctx := context.Background()
-	scanner := bufio.NewScanner(os.Stdin)
 	out := tui.NewOutput()
 
 	out.Banner("Welcome to the Agent-Space! Your personal AI assistant")
@@ -28,33 +31,57 @@ func StartCli() {
 		out.Errorf("agent unavailable: %v", err)
 	}
 
+	// Registration order is listing order. quit is a flag rather than a return
+	// from Run so the loop below ends the same way for every command.
+	quit := false
+	registry := NewRegistry(
+		newSessionCommand(out, assistant),
+		newIntegrationsCommand(out, assistant),
+		newResetCommand(out, assistant),
+		newExitCommand(out, &quit),
+	)
+	registry.Add(newHelpCommand(out, registry))
+
+	// The reader prints the prompt itself, since it has to redraw it every time
+	// the line changes.
+	reader := tui.NewReader(out)
+	reader.Suggest = registry.Suggest
+
 	for {
-		out.Prompt("agent-space>")
-
-		if !scanner.Scan() {
-			break
-		}
-
-		switch input := strings.TrimSpace(scanner.Text()); input {
-		case "":
-			continue
-		case "exit":
-			out.Farewell("Goodbye!")
-			return
-		case "help":
-			out.Plain("Available commands: help, reset, exit")
-		case "reset":
-			if assistant != nil {
-				assistant.Reset()
+		line, err := reader.ReadLine(prompt)
+		if err != nil {
+			// End of input is the user leaving, not a failure to report.
+			if !errors.Is(err, io.EOF) {
+				out.Errorf("error reading input: %v", err)
 			}
-			out.Notice("conversation cleared")
-		default:
-			answer(ctx, out, assistant, input)
-		}
-	}
 
-	if err := scanner.Err(); err != nil {
-		out.Errorf("error reading input: %v", err)
+			return
+		}
+
+		input := strings.TrimSpace(line)
+		if input == "" {
+			continue
+		}
+
+		// A palette choice comes back as the label the user would have typed,
+		// so there is only ever one way in.
+		cmd, found := registry.Get(strings.TrimPrefix(input, slash))
+
+		switch {
+		case found:
+			if err := cmd.Run(ctx); err != nil {
+				out.Errorf("%s: %v", cmd.Name, err)
+			}
+			if quit {
+				return
+			}
+		case strings.HasPrefix(input, slash):
+			out.Warn("unknown command: " + input)
+		default:
+			//comment below line to mock model call (saving request while dev mode, uncomment when real test)
+			fmt.Println("input: ", input)
+			// answer(ctx, out, assistant, input)
+		}
 	}
 }
 

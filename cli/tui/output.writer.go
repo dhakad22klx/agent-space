@@ -21,6 +21,7 @@ const (
 	Answer
 	Warn
 	Error
+	Frame
 )
 
 // style is everything this layer decides about a type.
@@ -42,6 +43,9 @@ var styles = map[Type]style{
 	Answer:   {paint: Green, newline: true},
 	Warn:     {paint: Yellow, newline: true},
 	Error:    {paint: Red, stderr: true, newline: true},
+	// Frame is the reader redrawing the input line: it composed the whole
+	// thing itself, line endings and colors included, so nothing is added.
+	Frame: {},
 }
 
 // Output is the one place output passes through. Callers say what a message
