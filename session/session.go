@@ -4,15 +4,14 @@
 package session
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // DefaultDir is where transcripts land, relative to where the CLI was started.
@@ -116,7 +115,7 @@ func (s *Session) write(e Entry) {
 		return
 	}
 
-	e.Time = time.Now().UTC().Format(time.RFC3339Nano)
+	e.Time = time.Now().UTC().Format(time.Stamp)
 
 	line, err := json.Marshal(e)
 	if err != nil {
@@ -139,15 +138,10 @@ func (s *Session) keep(err error) {
 // newID returns a random version 4 UUID, which is unique enough to name a run
 // without asking anything outside this process.
 func newID() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	id, err := uuid.NewRandom()
+	if err != nil {
 		return "", fmt.Errorf("cannot generate a session id: %w", err)
 	}
 
-	b[6] = b[6]&0x0f | 0x40 // version 4
-	b[8] = b[8]&0x3f | 0x80 // variant 10
-
-	h := hex.EncodeToString(b[:])
-
-	return strings.Join([]string{h[:8], h[8:12], h[12:16], h[16:20], h[20:]}, "-"), nil
+	return id.String(), nil
 }
