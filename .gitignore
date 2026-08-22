@@ -27,6 +27,9 @@ go.work.sum
 # env file
 .env
 
+# session transcripts
+sessions/*.jsonl
+
 # Editor/IDE
 # .idea/
 # .vscode/

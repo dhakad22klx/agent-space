@@ -23,25 +23,34 @@ const (
 	Error
 )
 
-// style is everything this layer decides about a type.
+// style is everything this layer decides about a type: how it is written, and
+// whether it belongs in the transcript.
 type style struct {
+	name    string              // what this type is called in a saved transcript
 	paint   func(string) string // nil leaves the text uncolored
 	stderr  bool
 	newline bool
+	keep    bool // false means the session's transcript ignores this type, even if it is printed
 }
 
 // styles is the rendering table: change how a type appears everywhere by
 // editing one row.
 var styles = map[Type]style{
-	Plain:    {newline: true},
-	Banner:   {paint: Blue, newline: true},
-	Farewell: {paint: Red, newline: true},
-	Prompt:   {paint: Magenta},
-	Notice:   {paint: Gray, newline: true},
-	Trace:    {paint: Gray, newline: true},
-	Answer:   {paint: Green, newline: true},
-	Warn:     {paint: Yellow, newline: true},
-	Error:    {paint: Red, stderr: true, newline: true},
+	Plain:    {name: "plain", newline: true, keep: true},
+	Banner:   {name: "banner", paint: Blue, newline: true},
+	Farewell: {name: "farewell", paint: Red, newline: true},
+	Prompt:   {name: "prompt", paint: Magenta},
+	Notice:   {name: "notice", paint: Gray, newline: true, keep: true},
+	Trace:    {name: "trace", paint: Gray, newline: true, keep: true},
+	Answer:   {name: "answer", paint: Green, newline: true, keep: true},
+	Warn:     {name: "warn", paint: Yellow, newline: true, keep: true},
+	Error:    {name: "error", paint: Red, stderr: true, newline: true, keep: true},
+}
+
+// Sink receives every message worth keeping, named by kind and still uncolored,
+// so a transcript can be recorded without a single caller printing differently.
+type Sink interface {
+	Append(kind, text string)
 }
 
 // Output is the one place output passes through. Callers say what a message
@@ -49,6 +58,7 @@ var styles = map[Type]style{
 type Output struct {
 	stdout io.Writer
 	stderr io.Writer
+	sink   Sink
 }
 
 // NewOutput writes to the process streams.
@@ -61,6 +71,9 @@ func NewOutput() *Output {
 func NewOutputTo(stdout, stderr io.Writer) *Output {
 	return &Output{stdout: stdout, stderr: stderr}
 }
+
+// Record starts copying what is printed into sink. Passing nil stops it.
+func (o *Output) Record(sink Sink) { o.sink = sink }
 
 func (o *Output) Banner(text string)   { o.Print(Banner, text) }
 func (o *Output) Farewell(text string) { o.Print(Farewell, text) }
@@ -82,11 +95,16 @@ func (o *Output) Errorf(format string, args ...any) {
 }
 
 // Print is the choke point every other method funnels into: the single spot
-// that colors the text, picks the stream, and later decides what to store.
+// that colors the text, picks the stream, and decides what to store.
 func (o *Output) Print(messageType Type, text string) {
 	s, ok := styles[messageType]
 	if !ok {
 		s = styles[Plain]
+	}
+
+	// The transcript keeps what was said, not how it was painted.
+	if o.sink != nil && s.keep {
+		o.sink.Append(s.name, text)
 	}
 
 	if s.paint != nil {

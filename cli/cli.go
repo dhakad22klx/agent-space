@@ -4,6 +4,7 @@ import (
 	agent "agent-harness/agent"
 	tui "agent-harness/cli/tui"
 	providers "agent-harness/providers"
+	session "agent-harness/session"
 	tools "agent-harness/tools"
 	"bufio"
 	"context"
@@ -22,6 +23,14 @@ func StartCli() {
 
 	out.Banner("Welcome to the Agent-Space! Your personal AI assistant")
 
+	// Every run gets its own transcript, and the id it was filed under is the
+	// last thing the user sees, however they leave.
+	session := newSession(out)
+	if session != nil {
+		out.Record(session)
+		defer closeSession(out, session)
+	}
+
 	// The prompt still works without a provider; only answering needs one.
 	assistant, err := newAgent(out, newProvider(ctx, out))
 	if err != nil {
@@ -35,7 +44,15 @@ func StartCli() {
 			break
 		}
 
-		switch input := strings.TrimSpace(scanner.Text()); input {
+		input := strings.TrimSpace(scanner.Text())
+
+		// What the user typed never passes through out, so the transcript has
+		// to be told about it here.
+		if session != nil && input != "" {
+			session.Append("user", input)
+		}
+
+		switch input {
 		case "":
 			continue
 		case "exit":
@@ -55,6 +72,29 @@ func StartCli() {
 
 	if err := scanner.Err(); err != nil {
 		out.Errorf("error reading input: %v", err)
+	}
+}
+
+// newSession opens this run's transcript, or nil when it cannot be written: a
+// missing log is worth a warning, never a refusal to start.
+func newSession(out *tui.Output) *session.Session {
+	record, err := session.Start(session.DefaultDir)
+	if err != nil {
+		out.Warn(fmt.Sprintf("not recording this session: %v", err))
+		return nil
+	}
+
+	return record
+}
+
+// closeSession finishes the transcript and leaves the id behind, so the user
+// knows which file this run just became.
+func closeSession(out *tui.Output, record *session.Session) {
+	out.Notice("session " + record.ID())
+	out.Record(nil)
+
+	if err := record.Close(); err != nil {
+		out.Warn(fmt.Sprintf("transcript incomplete: %v", err))
 	}
 }
 
