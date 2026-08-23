@@ -39,10 +39,14 @@ Kept apart on purpose, because they call for different reactions:
 
 ## Secrets
 
-A `Field` marked `Secret` is not echoed while typed and never written to the
-session transcript; `<key withheld>` is recorded in its place. Hiding the echo
-depends on `stty`, so it degrades to visible typing rather than to a failed
-check — the transcript rule is what actually holds.
+A `Field` marked `Secret` shows an asterisk per character as it is typed, and is
+never written to the session transcript; `<key withheld>` is recorded in its
+place.
+
+Masking needs the terminal a character at a time, which `cli/tui/terminal.secret.go`
+takes with `stty`. When it cannot — input from a pipe, no `stty` — the line is
+read visibly rather than the check refusing to run. So the masking is a courtesy
+and the transcript rule is the part that always holds.
 
 ## Filling in a stub
 

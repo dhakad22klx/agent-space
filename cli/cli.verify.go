@@ -186,27 +186,28 @@ func (a *asker) field(field integrations.Field) (string, bool) {
 	}
 }
 
-// read takes one line, hiding it while it is typed when it is a secret.
+// read takes one line, masking it while it is typed when it is a secret.
 func (a *asker) read(secret bool) (string, bool) {
 	if !secret {
-		if !a.in.Scan() {
-			return "", false
-		}
-
-		return a.in.Text(), true
+		return a.line()
 	}
 
-	// Echo goes back on before anything else is printed, so a failure here
-	// cannot leave the terminal silent for the next prompt.
-	restore := tui.HideTyping()
-	ok := a.in.Scan()
-	restore()
+	// Masking needs the terminal a character at a time, which only a real
+	// terminal will give. Anything else — a pipe, a machine without stty — is
+	// read as an ordinary visible line, because refusing the check would be the
+	// worse failure.
+	if typed, read, masked := tui.MaskedLine(a.out); masked {
+		return typed, read
+	}
 
-	// The newline the user typed was swallowed with the echo; without this the
-	// next line would continue the prompt.
-	a.out.Break()
+	return a.line()
+}
 
-	if !ok {
+// line reads one whole line from the loop's own scanner. The scanner is shared
+// with the main prompt on purpose: a second reader on the same stdin would
+// strand input in the other one's buffer.
+func (a *asker) line() (string, bool) {
+	if !a.in.Scan() {
 		return "", false
 	}
 

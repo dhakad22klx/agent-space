@@ -33,7 +33,7 @@ func (v *Verifier) Fields() []integrations.Field {
 		{
 			Key:    "token",
 			Label:  "Telegram bot token",
-			Help:   "the token BotFather gave you, shaped like 123456789:AA...; it is not echoed and not written to the transcript",
+			Help:   "the token BotFather gave you, shaped like 123456789:AA...; it is masked as you type and never written to the transcript",
 			Secret: true,
 		},
 	}

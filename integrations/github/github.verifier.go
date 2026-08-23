@@ -34,7 +34,7 @@ func (v *Verifier) Fields() []integrations.Field {
 		{
 			Key:    "token",
 			Label:  "GitHub token",
-			Help:   "a personal access token, OAuth token or installation token; it is not echoed and not written to the transcript",
+			Help:   "a personal access token, OAuth token or installation token; it is masked as you type and never written to the transcript",
 			Secret: true,
 		},
 		{
