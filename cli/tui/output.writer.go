@@ -16,6 +16,7 @@ const (
 	Banner
 	Farewell
 	Prompt
+	Break
 	Notice
 	Trace
 	Answer
@@ -40,6 +41,7 @@ var styles = map[Type]style{
 	Banner:   {name: "banner", paint: Blue, newline: true},
 	Farewell: {name: "farewell", paint: Red, newline: true},
 	Prompt:   {name: "prompt", paint: Magenta},
+	Break:    {name: "break", newline: true},
 	Notice:   {name: "notice", paint: Gray, newline: true, keep: true},
 	Trace:    {name: "trace", paint: Gray, newline: true, keep: true},
 	Answer:   {name: "answer", paint: Green, newline: true, keep: true},
@@ -84,6 +86,10 @@ func (o *Output) Trace(text string)    { o.Print(Trace, text) }
 func (o *Output) Answer(text string)   { o.Print(Answer, text) }
 func (o *Output) Warn(text string)     { o.Print(Warn, text) }
 func (o *Output) Error(text string)    { o.Print(Error, text) }
+
+// Break ends the current line without saying anything, for when the terminal
+// swallowed the newline the user typed.
+func (o *Output) Break() { o.Print(Break, "") }
 
 // Tracef and Errorf spare callers a Sprintf at the call site.
 func (o *Output) Tracef(format string, args ...any) {
