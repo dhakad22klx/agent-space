@@ -31,6 +31,11 @@ func StartCli() {
 		defer closeSession(out, session)
 	}
 
+	// Verification shares the loop's stdin and this run's transcript, so a
+	// check can ask for a token without handing the terminal to anything else.
+	verifiers := newVerifiers()
+	ask := &asker{in: scanner, out: out, record: session}
+
 	// The prompt still works without a provider; only answering needs one.
 	assistant, err := newAgent(out, newProvider(ctx, out))
 	if err != nil {
@@ -60,13 +65,22 @@ func StartCli() {
 			return
 		case "help":
 			out.Plain("Available commands: help, reset, exit")
+			out.Plain("Verify credentials: verify integration name: " + strings.Join(verifiers.Names(), ", "))
 		case "reset":
 			if assistant != nil {
 				assistant.Reset()
 			}
 			out.Notice("conversation cleared")
 		default:
-			answer(ctx, out, assistant, input)
+			// A recognised command is handled here rather than by the model,
+			// and an unknown integration name is a mistake worth reporting,
+			// not a prompt worth answering.
+			if names, isVerify := parseVerify(input); isVerify {
+				verifyIntegrations(ctx, out, ask, verifiers, names)
+				continue
+			}
+
+			// answer(ctx, out, assistant, input)
 		}
 	}
 

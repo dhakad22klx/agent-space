@@ -16,6 +16,8 @@ const (
 	Banner
 	Farewell
 	Prompt
+	Break
+	Mask
 	Notice
 	Trace
 	Answer
@@ -40,6 +42,8 @@ var styles = map[Type]style{
 	Banner:   {name: "banner", paint: Blue, newline: true},
 	Farewell: {name: "farewell", paint: Red, newline: true},
 	Prompt:   {name: "prompt", paint: Magenta},
+	Break:    {name: "break", newline: true},
+	Mask:     {name: "mask"},
 	Notice:   {name: "notice", paint: Gray, newline: true, keep: true},
 	Trace:    {name: "trace", paint: Gray, newline: true, keep: true},
 	Answer:   {name: "answer", paint: Green, newline: true, keep: true},
@@ -84,6 +88,15 @@ func (o *Output) Trace(text string)    { o.Print(Trace, text) }
 func (o *Output) Answer(text string)   { o.Print(Answer, text) }
 func (o *Output) Warn(text string)     { o.Print(Warn, text) }
 func (o *Output) Error(text string)    { o.Print(Error, text) }
+
+// Break ends the current line without saying anything, for when the terminal
+// swallowed the newline the user typed.
+func (o *Output) Break() { o.Print(Break, "") }
+
+// Mask stands in for a character the user typed that must not be shown. It is
+// echo rather than a message, so it is never recorded: the transcript would
+// otherwise fill with asterisks that say nothing.
+func (o *Output) Mask(text string) { o.Print(Mask, text) }
 
 // Tracef and Errorf spare callers a Sprintf at the call site.
 func (o *Output) Tracef(format string, args ...any) {
