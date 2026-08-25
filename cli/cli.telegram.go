@@ -1,0 +1,308 @@
+package cli
+
+import (
+	agent "agent-harness/agent"
+	credentials "agent-harness/credentials"
+	telegram "agent-harness/integrations/telegram"
+	providers "agent-harness/providers"
+	tools "agent-harness/tools"
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// telegramLink is dispatched as a handler and bracketed as a resumable. The
+// second is asserted at run time by design — most handlers are not resumable —
+// so it is pinned here: without this, renaming resume or stop would leave the
+// saved pairing silently never coming back up.
+var (
+	_ handler   = (*telegramLink)(nil)
+	_ resumable = (*telegramLink)(nil)
+)
+
+// telegramLink is the agent's side of a Telegram conversation: the saved
+// pairing, and the background poll that acts on it.
+//
+// Only one poll may run at a time — Telegram refuses a second getUpdates on the
+// same bot — so this owns the cancel that stops it and waits for it to be gone
+// before starting another.
+type telegramLink struct {
+	// The shared opening of every /verify: ask for the credential, check it,
+	// report the verdict. Telegram's command is that, and then a pairing.
+	credential
+
+	store    *credentials.Store
+	provider providers.IProvider
+
+	// unavailable is the reason there is no link to speak of, kept rather than
+	// raised at startup: an unreadable credentials file is worth reporting when
+	// the user asks for Telegram, not worth refusing to start the agent over.
+	unavailable error
+
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// newTelegramLink opens the credentials file and reports whether a pairing is
+// already on disk.
+func newTelegramLink(shared credential, provider providers.IProvider) *telegramLink {
+	link := &telegramLink{credential: shared, provider: provider}
+
+	store, err := credentials.Open(credentials.DefaultPath)
+	if err != nil {
+		link.unavailable = err
+		return link
+	}
+
+	link.store = store
+
+	return link
+}
+
+// name and summary are how this appears to the command dispatcher, which knows
+// nothing else about it.
+func (t *telegramLink) name() string { return "telegram" }
+
+func (t *telegramLink) summary() string {
+	return "pair a chat, so requests can arrive from your phone"
+}
+
+// resume brings the link back up from a pairing made in an earlier run, so the
+// agent is reachable from Telegram as soon as it starts rather than only after
+// someone pairs it again.
+func (t *telegramLink) resume(ctx context.Context) {
+	if t.unavailable != nil {
+		t.out.Warn(fmt.Sprintf("telegram unavailable: %v", t.unavailable))
+		return
+	}
+
+	record, found := t.record()
+	if !found || !record.Paired() {
+		return
+	}
+
+	t.listen(ctx, record)
+}
+
+// verify is what `/verify telegram` runs, and the whole of it: ask for the
+// token, check it, show a one-time code, wait for that code to come back from
+// Telegram, remember the chat that sent it, and leave the link listening.
+//
+// It does more than the other integrations' checks because it is a different
+// question. Theirs ask whether a credential works and stop; this one hands the
+// agent to a chat, and what it writes to disk outlives the run.
+func (t *telegramLink) verify(ctx context.Context) {
+	if t.unavailable != nil {
+		t.out.Errorf("telegram: %v", t.unavailable)
+		return
+	}
+
+	// A pairing and a listening link would be two polls on one bot, which
+	// Telegram refuses. The link comes back at the end, pointed at whichever
+	// chat this pairing settles on.
+	t.stop()
+
+	t.heading(t.name(), t.summary())
+
+	saved, _ := t.record()
+
+	token, ok := t.token(saved)
+	if !ok {
+		t.skipped(t.name())
+		return
+	}
+
+	client := telegram.NewClient(token)
+
+	// The token is checked before a code is minted. Waiting five minutes to
+	// discover it was mistyped is a bad way to learn it. This is the same check
+	// and the same reporting GitHub gets; everything below is what Telegram
+	// alone does with a token that passed.
+	me, result, err := telegram.Check(ctx, client)
+	if !t.report(t.name(), result, err) {
+		return
+	}
+
+	who, err := telegram.Pair(ctx, client, t.announceCode(me))
+	if errors.Is(err, telegram.ErrCodeExpired) {
+		t.out.Warn("  telegram: " + err.Error() + " — run `/verify telegram` to start over")
+		return
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+
+		t.out.Errorf("  telegram: pairing failed — %v", err)
+		return
+	}
+
+	record := telegram.NewRecord(token, who, time.Now())
+
+	// The pairing is reported before the save is judged: it did happen, and
+	// saying otherwise because a file could not be written would be wrong. A
+	// failed save is a link that works until the agent is restarted, which is
+	// worth its own line.
+	t.out.Answer("  telegram: paired with " + describe(who))
+
+	if err := t.save(record); err != nil {
+		t.out.Errorf("  telegram: the pairing could not be saved, so it will be lost on exit — %v", err)
+	} else {
+		t.out.Notice("  saved to " + t.store.Path() + ", readable only by you")
+	}
+
+	t.listen(ctx, record)
+}
+
+// announceCode shows the code and says what to do with it. The pairing package
+// hands this out rather than printing, so the CLI stays the only thing writing
+// to the terminal.
+func (t *telegramLink) announceCode(me telegram.User) func(string, time.Duration) {
+	return func(code string, lifetime time.Duration) {
+		t.out.Plain("  send this to @" + me.Username + " from the Telegram account you want to pair:")
+		t.out.Answer("      /verify " + code)
+		t.out.Notice("  good for " + lifetime.String() + ", once; waiting for it to come back…")
+	}
+}
+
+// token asks for the bot token, or keeps the one already saved.
+//
+// A saved token is described rather than offered as a Field default, because a
+// default is printed at the prompt and this one must not be. A blank answer
+// keeps it; anything typed replaces it, which is how a rotated token gets in.
+func (t *telegramLink) token(saved telegram.Record) (string, bool) {
+	field := telegram.TokenField()
+
+	if saved.BotToken != "" {
+		field.Help = "press enter to keep the token already saved, or paste a new one to replace it"
+		field.Optional = true
+	}
+
+	value, ok := t.ask.field(field)
+	if !ok {
+		return "", false
+	}
+
+	if strings.TrimSpace(value) == "" {
+		return saved.BotToken, true
+	}
+
+	return value, true
+}
+
+// listen starts the background poll for a paired chat, replacing whatever was
+// running before it.
+func (t *telegramLink) listen(ctx context.Context, record telegram.Record) {
+	t.stop()
+
+	listener := &telegram.Listener{
+		Client: telegram.NewClient(record.BotToken),
+		ChatID: record.AuthorizedChatID,
+		Handle: remoteHandler(t.remoteAgent()),
+		Trace:  t.out.Trace,
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	t.cancel, t.done = cancel, done
+
+	go func() {
+		defer close(done)
+
+		if err := listener.Run(ctx); err != nil {
+			t.out.Errorf("telegram: the link stopped — %v", err)
+		}
+	}()
+}
+
+// stop ends the background poll and waits for it to finish.
+//
+// The wait is the point. Cancelling only asks the poll to stop; starting another
+// before the old one has let go would leave two polls on one bot for a moment,
+// and Telegram answers the second with a refusal.
+func (t *telegramLink) stop() {
+	if t.cancel == nil {
+		return
+	}
+
+	t.cancel()
+	<-t.done
+	t.cancel, t.done = nil, nil
+}
+
+// remoteAgent builds the agent that answers Telegram.
+//
+// It is a second agent rather than the one at the prompt, and that is what makes
+// the link safe to run in the background: each conversation keeps its own
+// history, so a request from a phone cannot arrive in the middle of a local turn
+// and nothing in the agent has to be made safe for two goroutines. It also reads
+// better from the far end — the chat is its own conversation, with its own
+// thread of what was already said.
+func (t *telegramLink) remoteAgent() *agent.Agent {
+	if t.provider == nil {
+		return nil
+	}
+
+	remote := agent.New(t.provider, tools.NewRegistry(tools.NewRunBash()))
+	remote.OnToolCall = func(call providers.ToolCall, result providers.ToolResult) {
+		// Marked as the remote conversation's work, since it appears while
+		// someone may be typing at the local prompt.
+		t.out.Tracef("telegram · %s(%s)", call.Name, formatArgs(call.Args))
+		if result.IsError {
+			t.out.Warn("  " + result.Output)
+		}
+	}
+
+	return remote
+}
+
+// record reads the saved pairing. A file that exists but holds an entry this
+// cannot read is reported rather than treated as "never paired", since the two
+// call for different fixes.
+func (t *telegramLink) record() (telegram.Record, bool) {
+	var record telegram.Record
+
+	found, err := t.store.Get(telegram.CredentialsKey, &record)
+	if err != nil {
+		t.out.Errorf("telegram: %v", err)
+		return telegram.Record{}, false
+	}
+
+	return record, found
+}
+
+// save writes the pairing to the credentials file.
+func (t *telegramLink) save(record telegram.Record) error {
+	if err := t.store.Set(telegram.CredentialsKey, record); err != nil {
+		return err
+	}
+
+	return t.store.Save()
+}
+
+// remoteHandler turns a request from Telegram into one agent turn.
+//
+// A tool that fails, or a model that gives up, comes back as an error and the
+// listener reports it in the chat: the person who asked is not at this terminal
+// to see what went wrong, so silence would leave them waiting on nothing.
+func remoteHandler(remote *agent.Agent) telegram.Handler {
+	return func(ctx context.Context, text string) (string, error) {
+		if remote == nil {
+			return "", errors.New("this agent has no model provider configured, so it cannot answer")
+		}
+
+		return remote.Run(ctx, text)
+	}
+}
+
+// describe names a paired identity for the terminal. The chat id is always
+// shown, since it is the thing authorisation actually rests on.
+func describe(who telegram.Identity) string {
+	if who.Username == "" {
+		return fmt.Sprintf("chat %d", who.ChatID)
+	}
+
+	return fmt.Sprintf("@%s (chat %d)", who.Username, who.ChatID)
+}

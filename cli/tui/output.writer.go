@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 )
 
 // Type says what a message is, never how it looks. Callers pick a type and the
@@ -59,7 +60,13 @@ type Sink interface {
 
 // Output is the one place output passes through. Callers say what a message
 // means; this decides how it is written.
+//
+// Printing is serialised, because output no longer comes from one place: the
+// Telegram link traces what it is doing from its own goroutine while the prompt
+// is being read. Without the lock, two messages would interleave mid-line and a
+// colour left unclosed by one would bleed into the other.
 type Output struct {
+	mu     sync.Mutex
 	stdout io.Writer
 	stderr io.Writer
 	sink   Sink
@@ -77,7 +84,12 @@ func NewOutputTo(stdout, stderr io.Writer) *Output {
 }
 
 // Record starts copying what is printed into sink. Passing nil stops it.
-func (o *Output) Record(sink Sink) { o.sink = sink }
+func (o *Output) Record(sink Sink) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.sink = sink
+}
 
 func (o *Output) Banner(text string)   { o.Print(Banner, text) }
 func (o *Output) Farewell(text string) { o.Print(Farewell, text) }
@@ -110,6 +122,9 @@ func (o *Output) Errorf(format string, args ...any) {
 // Print is the choke point every other method funnels into: the single spot
 // that colors the text, picks the stream, and decides what to store.
 func (o *Output) Print(messageType Type, text string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	s, ok := styles[messageType]
 	if !ok {
 		s = styles[Plain]
