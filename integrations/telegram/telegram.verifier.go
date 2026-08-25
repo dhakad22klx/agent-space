@@ -1,48 +1,81 @@
-// Package telegram verifies a bot token. The check itself is not written yet;
-// what is here is the shape it will be written into.
 package telegram
 
 import (
 	"context"
+	"errors"
+	"strconv"
 
 	integrations "agent-harness/integrations"
 )
 
-// api is the Bot API host. The token goes in the path here, not in a header,
-// which is why nothing in this package may print a URL.
-const api = "https://api.telegram.org"
+// This file is what "is this token any good" means for Telegram, kept away from
+// the CLI so it can be exercised without a terminal. The command that uses it
+// does not stop here — pairing carries on from an accepted token — but where the
+// checking ends and the pairing begins is exactly this boundary.
 
-// Verifier will check a bot token. It holds no state, so one instance serves
-// every check.
-type Verifier struct{}
-
-// New builds the verifier.
-func New() *Verifier { return &Verifier{} }
-
-// Name is what the user types.
-func (v *Verifier) Name() string { return "telegram" }
-
-// Description is the line shown when listing integrations.
-func (v *Verifier) Description() string {
-	return "checks a Telegram bot token by looking up the bot it controls"
-}
-
-// Fields asks for the one thing the Bot API authenticates with.
-func (v *Verifier) Fields() []integrations.Field {
-	return []integrations.Field{
-		{
-			Key:    "token",
-			Label:  "Telegram bot token",
-			Help:   "the token BotFather gave you, shaped like 123456789:AA...; it is masked as you type and never written to the transcript",
-			Secret: true,
-		},
+// TokenField is the one credential the Bot API authenticates with.
+//
+// It is declared here rather than at the prompt so the wording is the
+// integration's own, and so the check and the pairing cannot drift into asking
+// for the same thing two different ways.
+func TokenField() integrations.Field {
+	return integrations.Field{
+		Key:    "token",
+		Label:  "Telegram bot token",
+		Help:   "the token BotFather gave you, shaped like 123456789:AA...; it is masked as you type and never written to the transcript",
+		Secret: true,
 	}
 }
 
-// Verify will call {api}/bot{token}/getMe, the request Telegram provides for
-// exactly this question. The token is interpolated into the path, so it needs
-// escaping before it goes in. A refusal arrives as ok:false with a description
-// worth quoting rather than paraphrasing.
-func (v *Verifier) Verify(ctx context.Context, in integrations.Input) (integrations.Result, error) {
-	return integrations.Result{}, integrations.ErrNotImplemented
+// Check looks up the bot a token controls and turns the answer into a verdict.
+//
+// getMe is the request the Bot API provides for exactly this question: it
+// succeeds only for a token Telegram accepts, and answers with the bot that
+// token controls.
+//
+// The bot itself comes back alongside the verdict because what follows a passed
+// check needs it — the pairing has to say which bot to send the code to — and
+// asking Telegram the same question twice would waste a round trip on a fact it
+// has already given.
+func Check(ctx context.Context, client *Client) (User, integrations.Result, error) {
+	me, err := client.GetMe(ctx)
+	result, err := Verdict(me, err)
+
+	return me, result, err
+}
+
+// Verdict turns a getMe answer into the three outcomes the CLI tells apart.
+//
+// A token Telegram refuses is a verdict, not a failure: ok:false comes back as
+// Result{OK: false} carrying Telegram's own description, since it explains the
+// problem better than a paraphrase would. Anything that stopped the check from
+// being made at all stays an error.
+//
+// It is separate from Check so the mapping can be exercised without a network:
+// which of the three a given answer becomes is the part worth being sure of.
+func Verdict(me User, err error) (integrations.Result, error) {
+	var refusal *Refusal
+	if errors.As(err, &refusal) {
+		return integrations.Result{OK: false, Summary: refusal.Description}, nil
+	}
+	if err != nil {
+		return integrations.Result{}, err
+	}
+
+	return integrations.Result{
+		OK:      true,
+		Summary: "the token controls @" + me.Username,
+		Facts:   Facts(me),
+	}, nil
+}
+
+// Facts is what a getMe reply is worth showing next to the verdict.
+func Facts(me User) []integrations.Fact {
+	return []integrations.Fact{
+		{Label: "username", Value: "@" + me.Username},
+		{Label: "id", Value: strconv.FormatInt(me.ID, 10)},
+		{Label: "name", Value: me.FirstName},
+		{Label: "can join groups", Value: strconv.FormatBool(me.CanJoinGroups)},
+		{Label: "supports inline queries", Value: strconv.FormatBool(me.SupportsInlineQueries)},
+	}
 }

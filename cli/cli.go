@@ -31,16 +31,23 @@ func StartCli() {
 		defer closeSession(out, session)
 	}
 
-	// Verification shares the loop's stdin and this run's transcript, so a
-	// check can ask for a token without handing the terminal to anything else.
-	verifiers := newVerifiers()
-	ask := &asker{in: scanner, out: out, record: session}
+	// The prompt still works without a provider; only answering needs one. The
+	// provider is kept rather than passed straight through, because Telegram
+	// answers over a second agent built on the same one.
+	provider := newProvider(ctx, out)
 
-	// The prompt still works without a provider; only answering needs one.
-	assistant, err := newAgent(out, newProvider(ctx, out))
+	assistant, err := newAgent(out, provider)
 	if err != nil {
 		out.Errorf("agent unavailable: %v", err)
 	}
+
+	// Everything reachable by a slash command, assembled once. The loop below
+	// only decides what a line is; this decides what to do about it, and owns
+	// whatever a command leaves running — a pairing saved by an earlier run
+	// starts polling here, and is stopped on the way out.
+	cmds := newCommands(out, scanner, session, provider)
+	cmds.resume(ctx)
+	defer cmds.stop()
 
 	for {
 		out.Prompt("agent-space>")
@@ -57,29 +64,25 @@ func StartCli() {
 			session.Append("user", input)
 		}
 
-		switch input {
-		case "":
+		switch {
+		case input == "":
 			continue
-		case "exit":
+		case input == "exit":
 			out.Farewell("Goodbye!")
 			return
-		case "help":
+		case input == "help":
 			out.Plain("Available commands: help, reset, exit")
-			out.Plain("Verify credentials: verify integration name: " + strings.Join(verifiers.Names(), ", "))
-		case "reset":
+			cmds.usage()
+		case input == "reset":
 			if assistant != nil {
 				assistant.Reset()
 			}
 			out.Notice("conversation cleared")
+		case isCommand(input):
+			// A slash line belongs to the CLI. It never reaches the model, so
+			// one that is not recognised is refused here rather than answered.
+			cmds.run(ctx, input)
 		default:
-			// A recognised command is handled here rather than by the model,
-			// and an unknown integration name is a mistake worth reporting,
-			// not a prompt worth answering.
-			if names, isVerify := parseVerify(input); isVerify {
-				verifyIntegrations(ctx, out, ask, verifiers, names)
-				continue
-			}
-
 			// answer(ctx, out, assistant, input)
 		}
 	}
