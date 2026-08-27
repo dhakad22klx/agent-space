@@ -5,7 +5,6 @@ import (
 	tui "agent-harness/cli/tui"
 	providers "agent-harness/providers"
 	session "agent-harness/session"
-	tools "agent-harness/tools"
 	"bufio"
 	"context"
 	"encoding/json"
@@ -33,12 +32,25 @@ func StartCli() {
 
 	// The prompt still works without a provider; only answering needs one. The
 	// provider is kept rather than passed straight through, because Telegram
-	// answers over a second agent built on the same one.
+	// reaches for the same agent, built on the same provider.
 	provider := newProvider(ctx, out)
 
-	assistant, err := newAgent(out, provider)
-	if err != nil {
-		out.Errorf("agent unavailable: %v", err)
+	// One agent for the whole process; nil when no model is configured, which
+	// the paths that use it report for themselves.
+	assistant := agent.GetAgent(provider)
+
+	// Attached here and only here. One agent serves both callers, so the trace
+	// is the agent's rather than a caller's — a Telegram request is announced by
+	// the listener ("telegram ← …") just before, which is what makes the calls
+	// after it attributable. Writing the field at startup, before the poll's
+	// goroutine exists, is also what keeps the read in that goroutine safe.
+	if assistant != nil {
+		assistant.OnToolCall = func(call providers.ToolCall, result providers.ToolResult) {
+			out.Tracef("· %s(%s)", call.Name, formatArgs(call.Args))
+			if result.IsError {
+				out.Warn("  " + result.Output)
+			}
+		}
 	}
 
 	// Everything reachable by a slash command, assembled once. The loop below
@@ -127,23 +139,6 @@ func newProvider(ctx context.Context, out *tui.Output) providers.IProvider {
 	out.Notice("model: " + gemini.Model())
 
 	return gemini
-}
-
-// newAgent gives the agent its tools and the trace printed while it works.
-func newAgent(out *tui.Output, provider providers.IProvider) (*agent.Agent, error) {
-	if provider == nil {
-		return nil, nil
-	}
-
-	assistant := agent.New(provider, tools.NewRegistry(tools.NewRunBash()))
-	assistant.OnToolCall = func(call providers.ToolCall, result providers.ToolResult) {
-		out.Tracef("· %s(%s)", call.Name, formatArgs(call.Args))
-		if result.IsError {
-			out.Warn("  " + result.Output)
-		}
-	}
-
-	return assistant, nil
 }
 
 // answer runs one prompt through the agent and prints the result.

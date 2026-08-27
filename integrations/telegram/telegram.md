@@ -107,10 +107,12 @@ guarantees that field, and a stranger cannot forge it.
   second poller, is not — waiting fixes neither, so the link closes and says
   which it was.
 
-Telegram gets its own agent instance, separate from the one at the prompt. Each
-keeps its own history, so a request from a phone cannot land mid-turn and
-nothing in the agent has to be made safe for two goroutines. It reads better
-from the far end too: the chat is its own conversation.
+Telegram answers over the same agent as the prompt — `agent.GetAgent`, one
+instance for the process. A request from a phone lands in the conversation the
+user has been having and picks up what was already established there, and
+`reset` at the prompt clears both. Since the poll calls `Run` from its own
+goroutine, the agent holds a lock for a whole turn: turns are serialized, so a
+request from a phone waits for a local one rather than landing mid-turn.
 
 ## The token
 
@@ -135,10 +137,9 @@ exceeded.
 Nothing here gates them separately, and that is a decision rather than an
 omission. The agent's own instructions already tell it to describe a command
 that would delete or overwrite and wait to be told to go ahead; over Telegram
-that plays out as a message asking, and the answer is the next message. The
-remote conversation keeps its own history, so that exchange works as it does at
-the prompt, without a second confirmation mechanism to keep in step with the
-first.
+that plays out as a message asking, and the answer is the next message. That
+exchange runs in the one history the prompt also uses, so it works as it does
+there, without a second confirmation mechanism to keep in step with the first.
 
 What that rests on is the pairing being sound. The paired chat can do anything
 the user running the agent can do — it is a shell on this machine, reached from
