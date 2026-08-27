@@ -95,7 +95,7 @@ func StartCli() {
 			// one that is not recognised is refused here rather than answered.
 			cmds.run(ctx, input)
 		default:
-			// answer(ctx, out, assistant, input)
+			answer(ctx, out, assistant, input)
 		}
 	}
 

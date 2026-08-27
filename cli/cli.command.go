@@ -3,7 +3,10 @@ package cli
 import (
 	tui "agent-harness/cli/tui"
 	"context"
+	"fmt"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 // commandPrefix marks a line as an instruction to the CLI rather than a question
@@ -13,6 +16,11 @@ import (
 // agent. A mistyped command is a mistake the CLI should say out loud, not
 // something a model should be left to interpret helpfully.
 const commandPrefix = "/"
+
+const (
+	mockEnvKey = "MOCK_AGENT_CALL"
+	envPath    = ".env"
+)
 
 // handler is what a matched command is handed to.
 //
@@ -82,6 +90,10 @@ func (c *commands) run(ctx context.Context, input string) {
 	switch name {
 	case "verify":
 		c.verify(ctx, args)
+	case "on":
+		setMock(c.out, false)
+	case "off":
+		setMock(c.out, true)
 	default:
 		c.out.Errorf("unknown command: %s", strings.TrimSpace(input))
 		c.usage()
@@ -119,6 +131,9 @@ func (c *commands) verify(ctx context.Context, args []string) {
 // is only half of what the user needs.
 func (c *commands) usage() {
 	c.out.Plain("Commands:")
+	c.out.Plain("  /on — send prompts to the model")
+	c.out.Plain("  /off — request does not reach the model")
+	c.out.Plain("  reset — reset the conversation")
 	for _, target := range c.handlers {
 		c.out.Plain("  /verify " + target.name() + " — " + target.summary())
 	}
@@ -142,5 +157,26 @@ func (c *commands) stop() {
 		if background, ok := c.handlers[i].(resumable); ok {
 			background.stop()
 		}
+	}
+}
+
+func setMock(out *tui.Output, mocked bool) {
+	env, err := godotenv.Read(envPath)
+	if err != nil {
+		out.Errorf("cannot read %s: %v", envPath, err)
+		return
+	}
+
+	env[mockEnvKey] = fmt.Sprintf("%t", mocked)
+
+	if err := godotenv.Write(env, envPath); err != nil {
+		out.Errorf("cannot write %s: %v", envPath, err)
+		return
+	}
+
+	if mocked {
+		out.Notice("agent off: prompts are answered locally, and nothing is sent to the model")
+	} else {
+		out.Notice("agent on: prompts go to the model")
 	}
 }

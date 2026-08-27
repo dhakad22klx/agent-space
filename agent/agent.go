@@ -7,6 +7,8 @@ import (
 
 	providers "agent-harness/providers"
 	tools "agent-harness/tools"
+
+	"github.com/joho/godotenv"
 )
 
 // systemPrompt frames the job for the model and nudges it to reach for tools
@@ -101,6 +103,14 @@ func GetAgent(provider providers.IProvider) *Agent {
 // Run answers one user prompt, running as many tool rounds as the model asks
 // for along the way.
 func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
+	env, err := godotenv.Read(".env")
+	if err != nil {
+		return "", fmt.Errorf("read .env: %w", err)
+	}
+	mockAgentCall := env["MOCK_AGENT_CALL"]
+	if mockAgentCall == "true" {
+		return "Agent call is mocked, to turn it on type `/on` and to turn it back off type `/off`.", nil
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
