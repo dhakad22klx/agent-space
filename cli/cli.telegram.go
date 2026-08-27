@@ -5,7 +5,6 @@ import (
 	credentials "agent-harness/credentials"
 	telegram "agent-harness/integrations/telegram"
 	providers "agent-harness/providers"
-	tools "agent-harness/tools"
 	"context"
 	"errors"
 	"fmt"
@@ -197,10 +196,13 @@ func (t *telegramLink) token(saved telegram.Record) (string, bool) {
 func (t *telegramLink) listen(ctx context.Context, record telegram.Record) {
 	t.stop()
 
+	// The same agent as the prompt, not one of its own: a request from a phone
+	// lands in the conversation the user has been having. The agent serializes
+	// turns, so this goroutine cannot arrive in the middle of a local one.
 	listener := &telegram.Listener{
 		Client: telegram.NewClient(record.BotToken),
 		ChatID: record.AuthorizedChatID,
-		Handle: remoteHandler(t.remoteAgent()),
+		Handle: remoteHandler(agent.GetAgent(t.provider)),
 		Trace:  t.out.Trace,
 	}
 
@@ -232,32 +234,6 @@ func (t *telegramLink) stop() {
 	t.cancel, t.done = nil, nil
 }
 
-// remoteAgent builds the agent that answers Telegram.
-//
-// It is a second agent rather than the one at the prompt, and that is what makes
-// the link safe to run in the background: each conversation keeps its own
-// history, so a request from a phone cannot arrive in the middle of a local turn
-// and nothing in the agent has to be made safe for two goroutines. It also reads
-// better from the far end — the chat is its own conversation, with its own
-// thread of what was already said.
-func (t *telegramLink) remoteAgent() *agent.Agent {
-	if t.provider == nil {
-		return nil
-	}
-
-	remote := agent.New(t.provider, tools.NewRegistry(tools.NewRunBash()))
-	remote.OnToolCall = func(call providers.ToolCall, result providers.ToolResult) {
-		// Marked as the remote conversation's work, since it appears while
-		// someone may be typing at the local prompt.
-		t.out.Tracef("telegram · %s(%s)", call.Name, formatArgs(call.Args))
-		if result.IsError {
-			t.out.Warn("  " + result.Output)
-		}
-	}
-
-	return remote
-}
-
 // record reads the saved pairing. A file that exists but holds an entry this
 // cannot read is reported rather than treated as "never paired", since the two
 // call for different fixes.
@@ -284,16 +260,16 @@ func (t *telegramLink) save(record telegram.Record) error {
 
 // remoteHandler turns a request from Telegram into one agent turn.
 //
-// A tool that fails, or a model that gives up, comes back as an error and the
-// listener reports it in the chat: the person who asked is not at this terminal
-// to see what went wrong, so silence would leave them waiting on nothing.
-func remoteHandler(remote *agent.Agent) telegram.Handler {
+// A tool that fails, a model that gives up, or no model at all comes back as an
+// error and the listener reports it in the chat: the person who asked is not at
+// this terminal, so silence would leave them waiting on nothing.
+func remoteHandler(assistant *agent.Agent) telegram.Handler {
 	return func(ctx context.Context, text string) (string, error) {
-		if remote == nil {
+		if assistant == nil {
 			return "", errors.New("this agent has no model provider configured, so it cannot answer")
 		}
 
-		return remote.Run(ctx, text)
+		return assistant.Run(ctx, text)
 	}
 }
 

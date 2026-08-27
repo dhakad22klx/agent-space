@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	providers "agent-harness/providers"
 	tools "agent-harness/tools"
@@ -43,11 +44,16 @@ const defaultMaxSteps = 10
 
 // Agent runs the ask-model / run-tools / ask-again loop and keeps the
 // conversation history across turns.
+// One agent serves the whole process (see GetAgent), and the Telegram poll calls
+// Run from its own goroutine. mu guards the history for a whole turn, so a
+// request from a phone waits for the local one instead of interleaving with it.
 type Agent struct {
 	provider providers.IProvider
 	tools    *tools.Registry
-	history  []providers.Message
 	maxSteps int
+
+	mu      sync.Mutex
+	history []providers.Message
 
 	// OnToolCall, when set, runs after each tool call so the UI can show what
 	// the agent is doing.
@@ -63,6 +69,37 @@ func New(provider providers.IProvider, registry *tools.Registry) *Agent {
 	}
 }
 
+// The one agent this process runs. Two things reach for it — the prompt and the
+// Telegram link — and one instance means one conversation, wherever the request
+// came from. sync.Once because only the building has to happen once; every later
+// call reads a pointer the Once already published safely.
+var (
+	agentInstance *Agent
+	agentOnce     sync.Once
+)
+
+// GetAgent returns that agent, building it on the first call.
+//
+// The first caller's provider is the one it keeps; a later call cannot replace
+// it. Tools are chosen here rather than by the caller, so adding one is a change
+// to this function alone.
+//
+// A nil provider means no model is configured, and the answer is a nil agent
+// rather than one that would panic when asked. The Once is left unspent, so a
+// later call with a working provider still builds; callers read nil as
+// "unavailable".
+func GetAgent(provider providers.IProvider) *Agent {
+	if provider == nil {
+		return nil
+	}
+
+	agentOnce.Do(func() {
+		agentInstance = New(provider, tools.NewRegistry(tools.NewRunBash()))
+	})
+
+	return agentInstance
+}
+
 // Run answers one user prompt, running as many tool rounds as the model asks
 // for along the way.
 func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
@@ -74,6 +111,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 	if mockAgentCall == "true" {
 		return "Agent call is mocked, to turn it on type `/on` and to turn it back off type `/off`.", nil
 	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	a.history = append(a.history, providers.Message{Role: providers.RoleUser, Text: prompt})
 
 	for step := 0; step < a.maxSteps; step++ {
@@ -107,8 +147,14 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 	return "", fmt.Errorf("stopped after %d tool rounds without a final answer", a.maxSteps)
 }
 
-// Reset forgets the conversation so far.
-func (a *Agent) Reset() { a.history = nil }
+// Reset forgets the conversation so far. One agent answers everywhere, so
+// `reset` at the prompt also drops what was said over Telegram.
+func (a *Agent) Reset() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.history = nil
+}
 
 // runTool executes one call. Failures come back as tool output rather than as a
 // Go error, so the model can read what went wrong and try something else.
