@@ -94,7 +94,10 @@ func GetAgent(provider providers.IProvider) *Agent {
 	}
 
 	agentOnce.Do(func() {
-		agentInstance = New(provider, tools.NewRegistry(tools.NewRunBash()))
+		agentInstance = New(provider, tools.NewRegistry(
+			tools.NewRunBash(),
+			tools.NewSendUpdatesToManager(),
+		))
 	})
 
 	return agentInstance
