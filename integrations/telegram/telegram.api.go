@@ -101,11 +101,47 @@ type Message struct {
 	Date int64  `json:"date"`
 }
 
+// Button is one inline-keyboard button: the label the user reads, and the token
+// that comes back when it is pressed.
+//
+// Data is the whole of what a press tells us — Telegram sends it back and
+// nothing else — so it has to identify what was being decided as well as the
+// answer. The Bot API caps it at 64 bytes, which is why it is a token rather
+// than a sentence.
+type Button struct {
+	Label string `json:"text"`
+	Data  string `json:"callback_data"`
+}
+
+// keyboard is the reply_markup a message's buttons travel in. Buttons are laid
+// out in rows; one row is all this sends, since two choices side by side is the
+// whole of what it offers.
+type keyboard struct {
+	Rows [][]Button `json:"inline_keyboard"`
+}
+
+// CallbackQuery is a button press.
+//
+// Message is the message the button was attached to, which is what makes the
+// press meaningful: the answer is "approve", and the question is whatever that
+// message said. Answering the press is not optional — Telegram spins the button
+// until it is acknowledged — which is what AnswerCallback is for.
+type CallbackQuery struct {
+	ID      string   `json:"id"`
+	From    *User    `json:"from"`
+	Message *Message `json:"message"`
+	Data    string   `json:"data"`
+}
+
 // Update is one thing that happened, as getUpdates reports it. ID is the cursor:
 // asking again from ID+1 is what tells Telegram this one was dealt with.
+//
+// Exactly one of the fields below is set on any update this asks for: a message
+// that arrived, or a button that was pressed.
 type Update struct {
-	ID      int64    `json:"update_id"`
-	Message *Message `json:"message"`
+	ID            int64          `json:"update_id"`
+	Message       *Message       `json:"message"`
+	CallbackQuery *CallbackQuery `json:"callback_query"`
 }
 
 // Refusal is the Bot API answering that it understood the request and will not
@@ -165,8 +201,10 @@ func (c *Client) GetUpdates(ctx context.Context, offset int64, wait time.Duratio
 	params.Set("offset", strconv.FormatInt(offset, 10))
 	params.Set("timeout", strconv.Itoa(int(wait.Seconds())))
 	// Nothing else is acted on, so nothing else is worth being sent or having
-	// to skip past.
-	params.Set("allowed_updates", `["message"]`)
+	// to skip past. Button presses are asked for here rather than only while
+	// listening, because this is the one place updates are requested; pairing
+	// shares it and skips anything that is not a message.
+	params.Set("allowed_updates", `["message","callback_query"]`)
 
 	var updates []Update
 	if err := c.call(ctx, "getUpdates", params, &updates); err != nil {
@@ -198,13 +236,16 @@ func (c *Client) SkipBacklog(ctx context.Context) (int64, error) {
 	return updates[len(updates)-1].ID + 1, nil
 }
 
-// SendMessage writes one message to a chat.
+// SendMessage writes one message to a chat, with the given buttons under it.
 //
 // Two things happen to the text on the way out. The token is scrubbed from it,
 // because this is the one place anything leaves the machine and the agent can
 // be asked to read files; and it is clamped to the Bot API's length limit,
 // because an over-long message is refused outright rather than shortened.
-func (c *Client) SendMessage(ctx context.Context, chatID int64, text string) error {
+//
+// The buttons are variadic so that the messages which want none — a nudge
+// during pairing, a failure — read exactly as they did before there were any.
+func (c *Client) SendMessage(ctx context.Context, chatID int64, text string, buttons ...Button) error {
 	body := Clamp(c.Scrub(text))
 
 	// Telegram rejects an empty message, and a command that printed nothing is
@@ -220,7 +261,46 @@ func (c *Client) SendMessage(ctx context.Context, chatID int64, text string) err
 	// and code, where an unpaired _ or * is ordinary; asking Telegram to read
 	// that as Markdown would have it refuse the message over punctuation.
 
+	if len(buttons) > 0 {
+		markup, err := json.Marshal(keyboard{Rows: [][]Button{buttons}})
+		if err != nil {
+			return fmt.Errorf("cannot build the buttons for sendMessage: %w", err)
+		}
+
+		params.Set("reply_markup", string(markup))
+	}
+
 	return c.call(ctx, "sendMessage", params, nil)
+}
+
+// AnswerCallback acknowledges a button press, with an optional line shown to the
+// user as a toast over the chat.
+//
+// It is not a courtesy. Telegram leaves a pressed button spinning until the
+// press is answered, so a link that acts on presses without calling this looks
+// broken from the phone even when it worked.
+func (c *Client) AnswerCallback(ctx context.Context, queryID, notice string) error {
+	params := url.Values{}
+	params.Set("callback_query_id", queryID)
+	if notice != "" {
+		params.Set("text", c.Scrub(notice))
+	}
+
+	return c.call(ctx, "answerCallbackQuery", params, nil)
+}
+
+// EditMessage replaces the text of a message already sent, and takes its
+// buttons away with it: a reply_markup that is not sent is a keyboard removed.
+//
+// That is what settles a decision. The choice made is written into the message
+// it was made about, and the buttons stop being there to press again.
+func (c *Client) EditMessage(ctx context.Context, chatID, messageID int64, text string) error {
+	params := url.Values{}
+	params.Set("chat_id", strconv.FormatInt(chatID, 10))
+	params.Set("message_id", strconv.FormatInt(messageID, 10))
+	params.Set("text", Clamp(c.Scrub(text)))
+
+	return c.call(ctx, "editMessageText", params, nil)
 }
 
 // Clamp shortens text to what the Bot API will accept, keeping the beginning,

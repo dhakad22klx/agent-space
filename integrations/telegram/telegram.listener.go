@@ -30,6 +30,42 @@ const (
 // user cannot get two requests interleaved.
 type Handler func(ctx context.Context, text string) (string, error)
 
+// Decision is what one of the buttons under an answer means. The values are the
+// callback data Telegram hands back on a press, so they are short and are not
+// changed lightly: a button pressed on a message sent by an earlier run comes
+// back carrying whichever spelling that run wrote.
+type Decision string
+
+const (
+	Approved Decision = "approve"
+	Rejected Decision = "reject"
+)
+
+// DecisionButtons is the row offered under an answer.
+func DecisionButtons() []Button {
+	return []Button{
+		{Label: "✅ Approve", Data: string(Approved)},
+		{Label: "❌ Reject", Data: string(Rejected)},
+	}
+}
+
+// verdict is how a decision is written back into the chat, and the toast shown
+// over the button that was pressed.
+//
+// The false result is a press this build does not recognise — a button from a
+// future version, or data nobody here wrote — and it is left alone rather than
+// guessed at.
+func (d Decision) verdict() (string, bool) {
+	switch d {
+	case Approved:
+		return "✅ Approved", true
+	case Rejected:
+		return "❌ Rejected", true
+	}
+
+	return "", false
+}
+
 // Listener is the running link to Telegram: it reads messages from the one
 // paired chat, hands them to the handler, and sends the outcome back.
 type Listener struct {
@@ -133,6 +169,11 @@ func (l *Listener) recover(ctx context.Context, err error, backoff *time.Duratio
 
 // dispatch decides what to do with one update.
 func (l *Listener) dispatch(ctx context.Context, update Update) {
+	if update.CallbackQuery != nil {
+		l.decide(ctx, update.CallbackQuery)
+		return
+	}
+
 	message := update.Message
 	if message == nil {
 		return
@@ -172,13 +213,59 @@ func (l *Listener) dispatch(ctx context.Context, update Update) {
 		return
 	}
 
-	l.reply(ctx, reply)
+	// The answer is the one message worth deciding about, so it is the only one
+	// that carries the buttons. A greeting, a nudge or a failure is not
+	// something to approve.
+	l.reply(ctx, reply, DecisionButtons()...)
 }
 
-// reply sends text to the paired chat, reporting a send that failed to the
-// terminal instead of losing it quietly.
-func (l *Listener) reply(ctx context.Context, text string) {
-	if err := l.Client.SendMessage(ctx, l.ChatID, text); err != nil {
+// decide acts on a button press: it acknowledges it, says so at the terminal,
+// and writes the choice into the message it was made about.
+//
+// The press is checked against the paired chat like any message. A button lives
+// in the message it was sent with, so only the paired chat has one to press —
+// but the check costs nothing and is the difference between that being true and
+// being assumed.
+func (l *Listener) decide(ctx context.Context, press *CallbackQuery) {
+	if press.Message == nil || press.Message.Chat.ID != l.ChatID {
+		l.trace("telegram: ignored a button press from outside the paired chat")
+		return
+	}
+
+	verdict, ok := Decision(press.Data).verdict()
+	if !ok {
+		l.trace("telegram: ignored an unrecognised button press")
+		return
+	}
+
+	// Acknowledged first, because Telegram leaves the button spinning until
+	// this arrives: the person who pressed it is waiting on this call, not on
+	// the edit below.
+	if err := l.Client.AnswerCallback(ctx, press.ID, verdict); err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+
+		l.trace("telegram: could not acknowledge the button press — " + err.Error())
+	}
+
+	l.trace("telegram → " + verdict + ": " + summarize(press.Message.Text))
+
+	// The choice is written into the message it was about, which also takes the
+	// buttons away: the decision was made, and it is not up for pressing again.
+	if err := l.Client.EditMessage(ctx, l.ChatID, press.Message.ID, press.Message.Text+"\n\n"+verdict); err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+
+		l.trace("telegram: could not record the decision in the chat — " + err.Error())
+	}
+}
+
+// reply sends text to the paired chat, with any buttons the caller wants under
+// it, reporting a send that failed to the terminal instead of losing it quietly.
+func (l *Listener) reply(ctx context.Context, text string, buttons ...Button) {
+	if err := l.Client.SendMessage(ctx, l.ChatID, text, buttons...); err != nil {
 		if ctx.Err() != nil {
 			return
 		}
