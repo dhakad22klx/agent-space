@@ -44,6 +44,13 @@ const defaultMaxSteps = 10
 // pausedForApproval is what Run answers once a call has been handed to a human.
 const pausedForApproval = "Processed for Human approval"
 
+// Where a held call stands. Both spellings live here so the one written at the
+// pause and the one read at the resume cannot drift apart.
+const (
+	approvalPending  = "PENDING"
+	approvalApproved = "APPROVED"
+)
+
 // Agent runs the ask-model / run-tools / ask-again loop and keeps the
 // conversation history across turns.
 // One agent serves the whole process (see GetAgent), and the Telegram poll calls
@@ -164,6 +171,95 @@ func (a *Agent) Run(ctx context.Context, prompt string, sessionID string) (strin
 	return "", fmt.Errorf("stopped after %d tool rounds without a final answer", a.maxSteps)
 }
 
+// Resume picks a paused run back up: it reads the state saved under sessionID,
+// runs the call the human approved, and carries on from the step the pause
+// stopped at.
+//
+// The conversation comes from the store rather than from this process, so a run
+// paused elsewhere resumes here with the history it actually had.
+func (a *Agent) Resume(ctx context.Context, sessionID string) (string, error) {
+	store, err := state.OpenRedis(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer store.Close()
+
+	var saved state.AgentState
+	found, err := store.Get(ctx, sessionID, &saved)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("no paused run saved for session %s", sessionID)
+	}
+	if saved.PendingApproval == nil {
+		return "", fmt.Errorf("session %s is %s, with nothing waiting on approval", sessionID, saved.Status)
+	}
+
+	// The decision is recorded before anything acts on it, so a resume that
+	// fails halfway does not leave the call looking like it is still waiting.
+	saved.PendingApproval.ApprovalStatus = approvalApproved
+	saved.Status = state.StatusRunning
+	if err := store.Put(ctx, sessionID, saved); err != nil {
+		return "", err
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.history = saved.History
+
+	// The approved call runs without another policy check: it is the one the
+	// human just decided on, so gating it again would pause on it forever.
+	approved := saved.PendingApproval.ToolCall
+	result := a.runTool(ctx, approved)
+	if a.OnToolCall != nil {
+		a.OnToolCall(approved, result)
+	}
+	a.history = append(a.history, providers.Message{Role: providers.RoleTool, ToolResults: []providers.ToolResult{result}})
+
+	// From here it is the same cycle Run walks, continuing the step budget the
+	// paused run had already spent.
+	for step := saved.Step + 1; step < a.maxSteps; step++ {
+		reply, err := a.provider.Chat(ctx, systemPrompt, a.history, a.tools.Schemas())
+		if err != nil {
+			return "", err
+		}
+
+		a.history = append(a.history, reply)
+
+		if len(reply.ToolCalls) == 0 {
+			// The run is over, so the paused copy of it is not worth keeping.
+			// if err := store.Delete(ctx, sessionID); err != nil {
+			// 	return "", err
+			// }
+
+			return reply.Text, nil
+		}
+
+		results := make([]providers.ToolResult, 0, len(reply.ToolCalls))
+		for _, call := range reply.ToolCalls {
+			if needHumanApproval(call.Name) {
+				if err := a.pause(ctx, sessionID, call, results, step); err != nil {
+					return "", err
+				}
+
+				return pausedForApproval, nil
+			}
+
+			result := a.runTool(ctx, call)
+			if a.OnToolCall != nil {
+				a.OnToolCall(call, result)
+			}
+			results = append(results, result)
+		}
+
+		a.history = append(a.history, providers.Message{Role: providers.RoleTool, ToolResults: results})
+	}
+
+	return "", fmt.Errorf("stopped after %d tool rounds without a final answer", a.maxSteps)
+}
+
 func needHumanApproval(toolName string) bool {
 	return humanintheloop.RequiresApproval(toolName)
 }
@@ -188,7 +284,7 @@ func (a *Agent) pause(ctx context.Context, sessionID string, call providers.Tool
 		PendingApproval: &state.PendingApproval{
 			ID:             uuid.NewString(),
 			ToolCall:       call,
-			ApprovalStatus: "PENDING",
+			ApprovalStatus: approvalPending,
 		},
 		Status: state.StatusWaitingApproval,
 		Step:   step,

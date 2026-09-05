@@ -54,7 +54,7 @@ func StartCli() {
 	// goroutine exists, is also what keeps the read in that goroutine safe.
 	if assistant != nil {
 		assistant.OnToolCall = func(call providers.ToolCall, result providers.ToolResult) {
-			out.Tracef("· %s(%s)", call.Name, formatArgs(call.Args))
+			out.Tracef("Tool Call· %s(%s)", call.Name, formatArgs(call.Args))
 			if result.IsError {
 				out.Warn("  " + result.Output)
 			}
@@ -104,6 +104,7 @@ func StartCli() {
 			cmds.run(ctx, input)
 		default:
 			answer(ctx, out, assistant, input, runID)
+			// assistant.Resume(ctx, input) -- to test Resume function by providing session id as input
 		}
 	}
 
