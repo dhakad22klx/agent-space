@@ -47,8 +47,9 @@ func (s *AgentState) Waiting() bool {
 type PendingApproval struct {
 	// ID matches a decision to the request it answers, so a stale approval is
 	// not applied to whatever is pending now.
-	ID       string             `json:"id"`
-	ToolCall providers.ToolCall `json:"tool_call"`
+	ID             string             `json:"id"`
+	ToolCall       providers.ToolCall `json:"tool_call"`
+	ApprovalStatus string             `json:"approval_status"`
 }
 
 // ApprovalDecision is the answer a human gave: approved alone is a plain yes,

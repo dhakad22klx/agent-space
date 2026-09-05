@@ -1,0 +1,20 @@
+# RedisInsight, for looking at the paused runs the agent stores.
+#
+#   docker compose up -d    start, then open http://localhost:5540
+#   docker compose down     stop, keeping saved connections
+#
+# The Redis it talks to is whatever REDIS_ADDR in .env points at; add that
+# server once in the UI and it is remembered in the volume below.
+
+services:
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: agent-space-redisinsight
+    restart: unless-stopped
+    ports:
+      - "5540:5540"
+    volumes:
+      - redisinsight-data:/data
+
+volumes:
+  redisinsight-data:

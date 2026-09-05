@@ -35,6 +35,10 @@ type telegramLink struct {
 	store    *credentials.Store
 	provider providers.IProvider
 
+	// session names the run in the state store. It is the prompt's own id: one
+	// agent answers both, so both sides of the conversation pause under one key.
+	session string
+
 	// unavailable is the reason there is no link to speak of, kept rather than
 	// raised at startup: an unreadable credentials file is worth reporting when
 	// the user asks for Telegram, not worth refusing to start the agent over.
@@ -46,8 +50,8 @@ type telegramLink struct {
 
 // newTelegramLink opens the credentials file and reports whether a pairing is
 // already on disk.
-func newTelegramLink(shared credential, provider providers.IProvider) *telegramLink {
-	link := &telegramLink{credential: shared, provider: provider}
+func newTelegramLink(shared credential, provider providers.IProvider, sessionID string) *telegramLink {
+	link := &telegramLink{credential: shared, provider: provider, session: sessionID}
 
 	store, err := credentials.Open(credentials.DefaultPath)
 	if err != nil {
@@ -202,7 +206,7 @@ func (t *telegramLink) listen(ctx context.Context, record telegram.Record) {
 	listener := &telegram.Listener{
 		Client: telegram.NewClient(record.BotToken),
 		ChatID: record.AuthorizedChatID,
-		Handle: remoteHandler(agent.GetAgent(t.provider)),
+		Handle: remoteHandler(agent.GetAgent(t.provider), t.session),
 		Trace:  t.out.Trace,
 	}
 
@@ -263,13 +267,13 @@ func (t *telegramLink) save(record telegram.Record) error {
 // A tool that fails, a model that gives up, or no model at all comes back as an
 // error and the listener reports it in the chat: the person who asked is not at
 // this terminal, so silence would leave them waiting on nothing.
-func remoteHandler(assistant *agent.Agent) telegram.Handler {
+func remoteHandler(assistant *agent.Agent, sessionID string) telegram.Handler {
 	return func(ctx context.Context, text string) (string, error) {
 		if assistant == nil {
 			return "", errors.New("this agent has no model provider configured, so it cannot answer")
 		}
 
-		return assistant.Run(ctx, text)
+		return assistant.Run(ctx, text, sessionID)
 	}
 }
 

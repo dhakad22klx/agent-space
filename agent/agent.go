@@ -5,42 +5,44 @@ import (
 	"fmt"
 	"sync"
 
+	humanintheloop "agent-harness/agent/human-in-the-loop"
+	state "agent-harness/agent/state"
 	providers "agent-harness/providers"
 	tools "agent-harness/tools"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 )
 
-// systemPrompt frames the job for the model and nudges it to reach for tools
-// instead of guessing.
+// systemPrompt frames the job for the model. It says nothing about individual
+// tools: the catalogue goes with every request and each tool's schema describes
+// itself, so a second copy here would only be the one that goes stale. What
+// stays is what no single schema can say - how to treat what tools report, and
+// when not to call one at all.
 const systemPrompt = `You are agent-space, an assistant running in the user's terminal.
-You have tools that inspect the user's machine. When answering needs the real
-contents of a file, call read_file instead of guessing, and base the answer only
-on what you read. For anything else the shell can tell you or do, call run_bash
-and answer from what it printed.
 
-A tool that fails still tells you something. When read_file reports that a path
-does not exist but lists files with similar names, pick the one the user most
-likely meant and call read_file again with that exact path; only ask the user
-when the list is empty or genuinely ambiguous. Stop calling tools once you can
-answer.
+Answer from what your tools actually report, never from what you assume. Each
+tool describes when it applies and what it cannot do; read those descriptions
+and pick by what the question needs.
 
-read_file is not confined to the working directory: it reads any path on this
-machine, and on a miss it searches for similar names. Never claim you can only
-see the current project, and never conclude a file is absent from anything but
-what a tool actually reported. When the question is only whether a file exists
-or where it lives, answer from the search result itself; do not read the file,
-which may hold private data the user did not ask to see.
+Gather with one tool, then write in your own words. Output another tool handed
+you is material for your answer, not the answer itself, and not something to
+paste into a tool that sends text somewhere.
 
-run_bash runs whatever command you give it, so keep commands to what the user
-asked for. Prefer the narrow command over the sweeping one, and when a command
-would delete, overwrite or send data anywhere, describe it and let the user say
-yes before running it. A non-zero exit is information, not a dead end: read the
-output it carries before deciding what to do next.`
+A call may be held for the user to approve before it runs. If a result says the
+call was rejected or changed, that is the user's decision: say so plainly and do
+not reach for another tool to get the same thing done.
+
+Most questions need no tool at all. Explaining, summarising, or answering from
+what a tool already told you is your own work, so do not call a tool to confirm
+something you have been told, and stop calling tools once you can answer.`
 
 // defaultMaxSteps bounds a single Run so a confused model cannot call tools
 // forever.
 const defaultMaxSteps = 10
+
+// pausedForApproval is what Run answers once a call has been handed to a human.
+const pausedForApproval = "Processed for Human approval"
 
 // Agent runs the ask-model / run-tools / ask-again loop and keeps the
 // conversation history across turns.
@@ -54,6 +56,7 @@ type Agent struct {
 
 	mu      sync.Mutex
 	history []providers.Message
+	session string // names this run in the state store
 
 	// OnToolCall, when set, runs after each tool call so the UI can show what
 	// the agent is doing.
@@ -105,7 +108,7 @@ func GetAgent(provider providers.IProvider) *Agent {
 
 // Run answers one user prompt, running as many tool rounds as the model asks
 // for along the way.
-func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
+func (a *Agent) Run(ctx context.Context, prompt string, sessionID string) (string, error) {
 	env, err := godotenv.Read(".env")
 	if err != nil {
 		return "", fmt.Errorf("read .env: %w", err)
@@ -136,6 +139,17 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 
 		results := make([]providers.ToolResult, 0, len(reply.ToolCalls))
 		for _, call := range reply.ToolCalls {
+			// The first call a human has to sign off on ends the turn. What ran
+			// before it is kept, so an approval arriving later resumes instead
+			// of running those tools a second time.
+			if needHumanApproval(call.Name) {
+				if err := a.pause(ctx, sessionID, call, results, step); err != nil {
+					return "", err
+				}
+
+				return pausedForApproval, nil
+			}
+
 			result := a.runTool(ctx, call)
 			if a.OnToolCall != nil {
 				a.OnToolCall(call, result)
@@ -148,6 +162,37 @@ func (a *Agent) Run(ctx context.Context, prompt string) (string, error) {
 	}
 
 	return "", fmt.Errorf("stopped after %d tool rounds without a final answer", a.maxSteps)
+}
+
+func needHumanApproval(toolName string) bool {
+	return humanintheloop.RequiresApproval(toolName)
+}
+
+// pause saves the run to the state store and leaves it there. The results
+// already gathered go into the history first, so the state holds everything up
+// to the call that is waiting.
+func (a *Agent) pause(ctx context.Context, sessionID string, call providers.ToolCall, done []providers.ToolResult, step int) error {
+	if len(done) > 0 {
+		a.history = append(a.history, providers.Message{Role: providers.RoleTool, ToolResults: done})
+	}
+
+	store, err := state.OpenRedis(ctx)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	return store.Put(ctx, sessionID, state.AgentState{
+		SessionID: sessionID,
+		History:   a.history,
+		PendingApproval: &state.PendingApproval{
+			ID:             uuid.NewString(),
+			ToolCall:       call,
+			ApprovalStatus: "PENDING",
+		},
+		Status: state.StatusWaitingApproval,
+		Step:   step,
+	})
 }
 
 // Reset forgets the conversation so far. One agent answers everywhere, so

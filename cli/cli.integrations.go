@@ -19,7 +19,7 @@ import (
 // in is the loop's own scanner, shared rather than reopened — two readers on one
 // stdin strand input in each other's buffers. provider is what Telegram answers
 // over, and is the one piece the loop also needs, for its own agent.
-func newCommands(out *tui.Output, in *bufio.Scanner, record *session.Session, provider providers.IProvider) *commands {
+func newCommands(out *tui.Output, in *bufio.Scanner, record *session.Session, provider providers.IProvider, sessionID string) *commands {
 	// The opening every handler shares. It holds the loop's own stdin and this
 	// run's transcript, so a handler can ask for a token without handing the
 	// terminal to anything else.
@@ -30,7 +30,7 @@ func newCommands(out *tui.Output, in *bufio.Scanner, record *session.Session, pr
 		// command starts, not where it ends: it goes on to ask a chat to
 		// answer, write what it learns, and leave the agent listening — none of
 		// which fits behind IVerifier.
-		newTelegramLink(shared, provider),
+		newTelegramLink(shared, provider, sessionID),
 	}
 
 	// Everything else is a credential check and needs no code of its own; the
