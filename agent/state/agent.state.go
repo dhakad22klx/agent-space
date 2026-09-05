@@ -23,10 +23,9 @@ const (
 type AgentState struct {
 	SessionID string `json:"session_id"`
 
-	// History survives the round trip with one loss: providers.Message keeps
-	// the provider's own copy of a model turn unexported, so a replayed turn is
-	// rebuilt from Role, Text and ToolCalls. For Gemini that drops the thought
-	// signature it expects echoed back.
+	// History round-trips whole: providers.Message stores the provider's own
+	// copy of a model turn alongside the shared fields, so a resumed run
+	// replays what the model actually sent - thought signatures included.
 	History []providers.Message `json:"history"`
 
 	// PendingApproval is set only while Status is StatusWaitingApproval.

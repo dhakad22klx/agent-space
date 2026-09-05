@@ -35,24 +35,27 @@ type Message struct {
 	ToolCalls   []ToolCall
 	ToolResults []ToolResult
 
-	// raw is the provider's own copy of a model turn, opaque to everyone else:
-	// Gemini requires the thought signature attached to a function call to be
-	// echoed back untouched, so a replayed turn uses this instead of the fields
-	// above.
-	raw any
+	// rawTurn is the provider's own copy of a model turn, opaque to everyone
+	// else: Gemini wants the thought signature attached to a function call
+	// echoed back untouched, Anthropic its thinking blocks, so a replayed turn
+	// uses this instead of the fields above. rawProvider says who wrote it, so
+	// one provider never replays another's turn. See providers.message.go for
+	// how the pair survives being stored.
+	rawTurn     any
+	rawProvider string
 }
 
 // ToolCall is the model asking for one tool to run.
 type ToolCall struct {
-	ID   string
-	Name string
-	Args map[string]any
+	ID   string         `json:"id"`
+	Name string         `json:"name"`
+	Args map[string]any `json:"args,omitempty"`
 }
 
 // ToolResult is what running a ToolCall produced.
 type ToolResult struct {
-	ID      string
-	Name    string
-	Output  string
-	IsError bool
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Output  string `json:"output,omitempty"`
+	IsError bool   `json:"is_error,omitempty"`
 }

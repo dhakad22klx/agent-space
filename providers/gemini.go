@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +12,23 @@ import (
 	"github.com/joho/godotenv"
 	"google.golang.org/genai"
 )
+
+// ProviderGemini names Gemini in a stored history, so a turn it recorded is
+// only ever replayed to Gemini.
+const ProviderGemini = "gemini"
+
+// A Gemini turn is a *genai.Content, which is the API's own wire type and so
+// reads back from the bytes it was stored as, thought signatures included.
+func init() {
+	registerRawCodec(ProviderGemini, func(encoded json.RawMessage) (any, error) {
+		var content genai.Content
+		if err := json.Unmarshal(encoded, &content); err != nil {
+			return nil, err
+		}
+
+		return &content, nil
+	})
+}
 
 // Gemini talks to the Gemini API through the official genai SDK.
 type Gemini struct {
@@ -85,7 +103,7 @@ func (g *Gemini) Chat(ctx context.Context, system string, history []Message, sch
 	// Walk the parts by hand rather than using res.Text(): it logs a warning
 	// whenever a response mixes text with function calls, which is the normal
 	// case here.
-	reply := Message{Role: RoleModel, raw: res.Candidates[0].Content}
+	reply := Message{Role: RoleModel}.withRaw(ProviderGemini, res.Candidates[0].Content)
 	var text strings.Builder
 	for _, part := range res.Candidates[0].Content.Parts {
 		switch {
@@ -130,7 +148,7 @@ func contents(history []Message) []*genai.Content {
 		case RoleModel:
 			// Replay the turn Gemini sent, so thought signatures and part order
 			// survive the round trip.
-			if raw, ok := msg.raw.(*genai.Content); ok && raw != nil {
+			if raw, ok := msg.rawOf(ProviderGemini).(*genai.Content); ok && raw != nil {
 				content := *raw
 				if content.Role == "" {
 					content.Role = string(genai.RoleModel)
