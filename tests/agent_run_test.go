@@ -80,7 +80,7 @@ func TestRunCallsToolThenAnswers(t *testing.T) {
 		seen = append(seen, result)
 	}
 
-	answer, err := a.Run(context.Background(), "run echo for me")
+	answer, err := a.Run(context.Background(), "run echo for me", "test-session")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestRunReportsUnknownToolToTheModel(t *testing.T) {
 
 	a := agent.New(provider, tools.NewRegistry(tools.NewRunBash()))
 
-	answer, err := a.Run(context.Background(), "read a file")
+	answer, err := a.Run(context.Background(), "read a file", "test-session")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestRunSkipsTheProviderWhenMocked(t *testing.T) {
 	provider := &scriptedProvider{}
 	a := agent.New(provider, tools.NewRegistry(tools.NewRunBash()))
 
-	answer, err := a.Run(context.Background(), "anything")
+	answer, err := a.Run(context.Background(), "anything", "test-session")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

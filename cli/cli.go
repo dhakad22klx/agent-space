@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // StartCli runs the read-prompt-answer loop until the user leaves. Nothing here
@@ -30,6 +32,12 @@ func StartCli() {
 		defer closeSession(out, session)
 	}
 
+	// One id names this run wherever it is answered from, so a turn paused for
+	// approval is found under the same key whether it started here or over
+	// Telegram. The transcript's id when there is one, since that is what the
+	// user is shown on the way out.
+	runID := sessionKey(session)
+
 	// The prompt still works without a provider; only answering needs one. The
 	// provider is kept rather than passed straight through, because Telegram
 	// reaches for the same agent, built on the same provider.
@@ -46,7 +54,7 @@ func StartCli() {
 	// goroutine exists, is also what keeps the read in that goroutine safe.
 	if assistant != nil {
 		assistant.OnToolCall = func(call providers.ToolCall, result providers.ToolResult) {
-			out.Tracef("· %s(%s)", call.Name, formatArgs(call.Args))
+			out.Tracef("Tool Call· %s(%s)", call.Name, formatArgs(call.Args))
 			if result.IsError {
 				out.Warn("  " + result.Output)
 			}
@@ -57,7 +65,7 @@ func StartCli() {
 	// only decides what a line is; this decides what to do about it, and owns
 	// whatever a command leaves running — a pairing saved by an earlier run
 	// starts polling here, and is stopped on the way out.
-	cmds := newCommands(out, scanner, session, provider)
+	cmds := newCommands(out, scanner, session, provider, runID)
 	cmds.resume(ctx)
 	defer cmds.stop()
 
@@ -95,7 +103,8 @@ func StartCli() {
 			// one that is not recognised is refused here rather than answered.
 			cmds.run(ctx, input)
 		default:
-			answer(ctx, out, assistant, input)
+			answer(ctx, out, assistant, input, runID)
+			// assistant.Resume(ctx, input) -- to test Resume function by providing session id as input
 		}
 	}
 
@@ -127,6 +136,17 @@ func closeSession(out *tui.Output, record *session.Session) {
 	}
 }
 
+// sessionKey names this run for the state store. A transcript that failed to
+// open leaves the run without an id of its own, and a pause still has to be
+// findable, so one is minted instead.
+func sessionKey(record *session.Session) string {
+	if record == nil {
+		return uuid.NewString()
+	}
+
+	return record.ID()
+}
+
 // newProvider picks the model provider to run with, or nil when none is
 // configured. Returning the interface keeps the rest of the CLI vendor-neutral.
 func newProvider(ctx context.Context, out *tui.Output) providers.IProvider {
@@ -142,13 +162,13 @@ func newProvider(ctx context.Context, out *tui.Output) providers.IProvider {
 }
 
 // answer runs one prompt through the agent and prints the result.
-func answer(ctx context.Context, out *tui.Output, assistant *agent.Agent, input string) {
+func answer(ctx context.Context, out *tui.Output, assistant *agent.Agent, input string, sessionID string) {
 	if assistant == nil {
 		out.Error("cannot answer: the agent is not configured")
 		return
 	}
 
-	reply, err := assistant.Run(ctx, input)
+	reply, err := assistant.Run(ctx, input, sessionID)
 	if err != nil {
 		out.Errorf("error: %v", err)
 		return
