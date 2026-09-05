@@ -33,7 +33,7 @@ sessions/*.jsonl
 # integration credentials: bot tokens and the identities paired with them
 credentials.json
 .credentials-*.tmp
-tests/*
+# tests/*
 
 # Editor/IDE
 # .idea/
