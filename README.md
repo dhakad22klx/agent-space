@@ -32,6 +32,27 @@ Agent Harness written in Go.
    go run .
    ```
 
+## HTTP API
+
+Start agent-space in HTTP mode by supplying a listen address. Use a loopback
+address unless you have added authentication in front of the service.
+
+```bash
+go run . -http 127.0.0.1:8080
+```
+
+Invoke the same agent execution flow used by the CLI:
+
+```bash
+curl -X POST http://127.0.0.1:8080/agent/invoke \
+  -H 'Content-Type: application/json' \
+  -d '{"input":"Summarize the current directory"}'
+```
+
+A successful request returns `{"success":true,"result":"..."}`. Invalid
+input returns HTTP 400, and agent execution failures return HTTP 500 with
+`{"success":false,"error":"..."}`.
+
 ## CLI commands
 
 | Command | Description |
