@@ -193,6 +193,13 @@ func (l *Listener) decide(ctx context.Context, query *CallbackQuery) {
 		return
 	}
 
+	// The buttons of a decided request are left in place to show what was
+	// chosen, so they still send taps. Answering one is all there is to do.
+	if query.Data == DecisionSettled {
+		l.answer(ctx, query.ID, "That request was already decided.")
+		return
+	}
+
 	decision, sessionID, approvalID, ok := ParseApproval(query.Data)
 	if !ok {
 		l.answer(ctx, query.ID, "")
@@ -204,10 +211,11 @@ func (l *Listener) decide(ctx context.Context, query *CallbackQuery) {
 	// approved run takes as long as the model does.
 	l.answer(ctx, query.ID, "working on it…")
 
-	// The buttons go before the decision runs, so a second tap has nothing left
-	// to hit. An already-stripped message is refused here, which is fine.
-	if err := l.Client.StripButtons(ctx, query.Message.Chat.ID, query.Message.ID); err != nil {
-		l.trace("telegram: could not clear the buttons — " + err.Error())
+	// The buttons settle before the decision runs, so a second tap has nothing
+	// live left to hit. Telegram refuses an edit that changes nothing, which is
+	// what an already-settled message gives back, and that is fine.
+	if err := l.Client.EditButtons(ctx, query.Message.Chat.ID, query.Message.ID, SettledRow(decision)...); err != nil {
+		l.trace("telegram: could not settle the buttons — " + err.Error())
 	}
 
 	if l.Approve == nil {

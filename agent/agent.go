@@ -336,7 +336,7 @@ func held(ctx context.Context, store state.Store, sessionID string, approvalID s
 	if saved.PendingApproval.ApprovalStatus != approvalPending {
 		return saved, fmt.Errorf("that call was already %s", strings.ToLower(saved.PendingApproval.ApprovalStatus))
 	}
-	if approvalID != "" && !strings.HasPrefix(saved.PendingApproval.ID, approvalID) {
+	if approvalID != "" && saved.PendingApproval.ID != approvalID {
 		return saved, errors.New("that request is no longer the one waiting")
 	}
 

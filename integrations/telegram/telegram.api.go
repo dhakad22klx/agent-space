@@ -237,15 +237,23 @@ func (c *Client) SendMessage(ctx context.Context, chatID int64, text string) err
 
 // SendButtons writes a message with one row of inline buttons under it.
 func (c *Client) SendButtons(ctx context.Context, chatID int64, text string, row ...Button) error {
+	if err := fits(row); err != nil {
+		return err
+	}
+
+	return c.send(ctx, chatID, text, [][]Button{row})
+}
+
+// fits refuses an over-long payload here rather than at Telegram, which would
+// otherwise deliver the message with no buttons on it.
+func fits(row []Button) error {
 	for _, button := range row {
-		// Refused here rather than by Telegram, which would otherwise deliver
-		// the message with no buttons on it.
 		if len(button.Data) > MaxCallbackDataBytes {
 			return fmt.Errorf("callback data for %q is %d bytes, over the %d allowed", button.Text, len(button.Data), MaxCallbackDataBytes)
 		}
 	}
 
-	return c.send(ctx, chatID, text, [][]Button{row})
+	return nil
 }
 
 // send is the one place a message leaves, so the scrub and the clamp live here
@@ -290,10 +298,19 @@ func (c *Client) AnswerCallbackQuery(ctx context.Context, queryID, notice string
 	return c.call(ctx, "answerCallbackQuery", params, nil)
 }
 
-// StripButtons removes a sent message's keyboard, so a decided request cannot
-// be tapped again.
-func (c *Client) StripButtons(ctx context.Context, chatID, messageID int64) error {
-	empty, err := markup(nil)
+// EditButtons replaces a sent message's keyboard, leaving its text alone.
+// Passing no buttons removes the keyboard instead.
+func (c *Client) EditButtons(ctx context.Context, chatID, messageID int64, row ...Button) error {
+	if err := fits(row); err != nil {
+		return err
+	}
+
+	var keyboard [][]Button
+	if len(row) > 0 {
+		keyboard = [][]Button{row}
+	}
+
+	replacement, err := markup(keyboard)
 	if err != nil {
 		return err
 	}
@@ -301,7 +318,7 @@ func (c *Client) StripButtons(ctx context.Context, chatID, messageID int64) erro
 	params := url.Values{}
 	params.Set("chat_id", strconv.FormatInt(chatID, 10))
 	params.Set("message_id", strconv.FormatInt(messageID, 10))
-	params.Set("reply_markup", empty)
+	params.Set("reply_markup", replacement)
 
 	return c.call(ctx, "editMessageReplyMarkup", params, nil)
 }
