@@ -2,6 +2,7 @@ package cli
 
 import (
 	agent "agent-harness/agent"
+	state "agent-harness/agent/state"
 	credentials "agent-harness/credentials"
 	telegram "agent-harness/integrations/telegram"
 	providers "agent-harness/providers"
@@ -11,6 +12,10 @@ import (
 	"strings"
 	"time"
 )
+
+// notifyTimeout bounds the approval message. It is sent while the agent holds
+// its turn, so a slow Telegram must not hold the prompt with it.
+const notifyTimeout = 15 * time.Second
 
 // telegramLink is dispatched as a handler and bracketed as a resumable. The
 // second is asserted at run time by design — most handlers are not resumable —
@@ -200,14 +205,23 @@ func (t *telegramLink) token(saved telegram.Record) (string, bool) {
 func (t *telegramLink) listen(ctx context.Context, record telegram.Record) {
 	t.stop()
 
+	client := telegram.NewClient(record.BotToken)
+	assistant := agent.GetAgent(t.provider)
+
 	// The same agent as the prompt, not one of its own: a request from a phone
 	// lands in the conversation the user has been having. The agent serializes
 	// turns, so this goroutine cannot arrive in the middle of a local one.
 	listener := &telegram.Listener{
-		Client: telegram.NewClient(record.BotToken),
-		ChatID: record.AuthorizedChatID,
-		Handle: remoteHandler(agent.GetAgent(t.provider), t.session),
-		Trace:  t.out.Trace,
+		Client:  client,
+		ChatID:  record.AuthorizedChatID,
+		Handle:  remoteHandler(assistant, t.session),
+		Approve: approvalHandler(assistant),
+		Trace:   t.out.Trace,
+	}
+
+	// A pause has somewhere to announce to only while this link is up.
+	if assistant != nil {
+		assistant.SetApprovalNotifier(t.notifier(client, record.AuthorizedChatID))
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -236,6 +250,12 @@ func (t *telegramLink) stop() {
 	t.cancel()
 	<-t.done
 	t.cancel, t.done = nil, nil
+
+	// Nothing is polling now, so a pause must not block sending buttons to a
+	// chat no one is watching.
+	if assistant := agent.GetAgent(t.provider); assistant != nil {
+		assistant.SetApprovalNotifier(nil)
+	}
 }
 
 // record reads the saved pairing. A file that exists but holds an entry this
@@ -274,6 +294,54 @@ func remoteHandler(assistant *agent.Agent, sessionID string) telegram.Handler {
 		}
 
 		return assistant.Run(ctx, text, sessionID)
+	}
+}
+
+// notifier asks the paired chat to decide on a held call, with a button for
+// each answer.
+//
+// The send is bounded because it runs while the agent holds its turn: the
+// client's own timeout is sized for a held-open poll, and inheriting it would
+// freeze the local prompt for a minute on a Telegram hiccup.
+func (t *telegramLink) notifier(client *telegram.Client, chatID int64) agent.ApprovalNotifier {
+	return func(ctx context.Context, sessionID string, pending state.PendingApproval) {
+		ctx, cancel := context.WithTimeout(ctx, notifyTimeout)
+		defer cancel()
+
+		text := fmt.Sprintf(
+			"Approval needed\n\nsession: %s\n\nThe agent wants to run:\n%s(%s)\n\nApprove to run it, Decline to skip it.",
+			sessionID, pending.ToolCall.Name, formatArgs(pending.ToolCall.Args),
+		)
+
+		err := client.SendButtons(ctx, chatID, text,
+			telegram.Button{Text: "Approve", Data: telegram.ApprovalData(telegram.DecisionApprove, sessionID, pending.ID)},
+			telegram.Button{Text: "Decline", Data: telegram.ApprovalData(telegram.DecisionDecline, sessionID, pending.ID)},
+		)
+		if err != nil {
+			t.out.Errorf("telegram: could not ask for approval — %v", err)
+		}
+	}
+}
+
+// approvalHandler turns a tap into the run resuming, or into the held call
+// being dropped.
+//
+// The session id comes from the button rather than from this link: that one
+// names the run the buttons were sent for, and it outlives this process.
+func approvalHandler(assistant *agent.Agent) telegram.Approvals {
+	return func(ctx context.Context, decision, sessionID, approvalID string) (string, error) {
+		if assistant == nil {
+			return "", errors.New("this agent has no model provider configured, so it cannot answer")
+		}
+
+		switch decision {
+		case telegram.DecisionApprove:
+			return assistant.ResumeApproval(ctx, sessionID, approvalID)
+		case telegram.DecisionDecline:
+			return assistant.Decline(ctx, sessionID, approvalID)
+		}
+
+		return "", fmt.Errorf("unknown decision %q", decision)
 	}
 }
 

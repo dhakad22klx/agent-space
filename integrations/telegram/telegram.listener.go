@@ -42,6 +42,9 @@ type Listener struct {
 	// Handle runs an authorised request.
 	Handle Handler
 
+	// Approve acts on an authorised tap of an approval button.
+	Approve Approvals
+
 	// Trace, when set, reports what the link is doing to whoever is watching
 	// the terminal. It never receives message text from an unpaired chat.
 	Trace func(string)
@@ -133,6 +136,12 @@ func (l *Listener) recover(ctx context.Context, err error, backoff *time.Duratio
 
 // dispatch decides what to do with one update.
 func (l *Listener) dispatch(ctx context.Context, update Update) {
+	// A tap is not a request: it answers one the agent already asked about.
+	if update.CallbackQuery != nil {
+		l.decide(ctx, update.CallbackQuery)
+		return
+	}
+
 	message := update.Message
 	if message == nil {
 		return
@@ -173,6 +182,68 @@ func (l *Listener) dispatch(ctx context.Context, update Update) {
 	}
 
 	l.reply(ctx, reply)
+}
+
+// decide acts on a tap of an approval button.
+func (l *Listener) decide(ctx context.Context, query *CallbackQuery) {
+	// A tap is authorised on the chat its message lives in, the same gate
+	// messages get, and ignored in silence for the same reason.
+	if query.Message == nil || query.Message.Chat.ID != l.ChatID {
+		l.trace("telegram: ignored a button tap from an unauthorized chat")
+		return
+	}
+
+	// The buttons of a decided request are left in place to show what was
+	// chosen, so they still send taps. Answering one is all there is to do.
+	if query.Data == DecisionSettled {
+		l.answer(ctx, query.ID, "That request was already decided.")
+		return
+	}
+
+	decision, sessionID, approvalID, ok := ParseApproval(query.Data)
+	if !ok {
+		l.answer(ctx, query.ID, "")
+		l.trace("telegram: ignored a button this build does not understand")
+		return
+	}
+
+	// Answered before the work: Telegram expires a query id in seconds, and an
+	// approved run takes as long as the model does.
+	l.answer(ctx, query.ID, "working on it…")
+
+	// The buttons settle before the decision runs, so a second tap has nothing
+	// live left to hit. Telegram refuses an edit that changes nothing, which is
+	// what an already-settled message gives back, and that is fine.
+	if err := l.Client.EditButtons(ctx, query.Message.Chat.ID, query.Message.ID, SettledRow(decision)...); err != nil {
+		l.trace("telegram: could not settle the buttons — " + err.Error())
+	}
+
+	if l.Approve == nil {
+		l.reply(ctx, "this agent cannot act on approvals")
+		return
+	}
+
+	l.trace(fmt.Sprintf("telegram ← %s for session %s", decision, sessionID))
+
+	reply, err := l.Approve(ctx, decision, sessionID, approvalID)
+	if err != nil {
+		l.reply(ctx, "failed: "+err.Error())
+		l.trace("telegram: the decision failed — " + err.Error())
+		return
+	}
+
+	l.reply(ctx, reply)
+}
+
+// answer clears the spinner on a tapped button.
+func (l *Listener) answer(ctx context.Context, queryID, notice string) {
+	if err := l.Client.AnswerCallbackQuery(ctx, queryID, notice); err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+
+		l.trace("telegram: could not answer the button tap — " + err.Error())
+	}
 }
 
 // reply sends text to the paired chat, reporting a send that failed to the

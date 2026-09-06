@@ -38,6 +38,13 @@ const (
 
 	// MaxMessageRunes is the Bot API's own limit on the text of one message.
 	MaxMessageRunes = 4096
+
+	// MaxCallbackDataBytes is the Bot API's limit on a button's payload.
+	MaxCallbackDataBytes = 64
+
+	// MaxNoticeRunes is the limit on the popup an answered tap shows. Far
+	// shorter than a message, and a longer one is refused outright.
+	MaxNoticeRunes = 200
 )
 
 // api is the Bot API host. The token goes in the path here, not in a header,
@@ -101,11 +108,31 @@ type Message struct {
 	Date int64  `json:"date"`
 }
 
+// CallbackQuery is a tap on an inline-keyboard button. Message is the one the
+// keyboard hangs off, which is where the tap's chat comes from.
+type CallbackQuery struct {
+	ID      string   `json:"id"`
+	From    *User    `json:"from"`
+	Message *Message `json:"message"`
+	Data    string   `json:"data"`
+}
+
+// Button is one inline-keyboard button: its label, and the payload a tap sends
+// back.
+type Button struct {
+	Text string `json:"text"`
+	Data string `json:"callback_data"`
+}
+
 // Update is one thing that happened, as getUpdates reports it. ID is the cursor:
 // asking again from ID+1 is what tells Telegram this one was dealt with.
 type Update struct {
 	ID      int64    `json:"update_id"`
 	Message *Message `json:"message"`
+
+	// CallbackQuery is set instead of Message when a button was tapped. Which
+	// field is filled is how a decision is told from a request.
+	CallbackQuery *CallbackQuery `json:"callback_query"`
 }
 
 // Refusal is the Bot API answering that it understood the request and will not
@@ -164,9 +191,9 @@ func (c *Client) GetUpdates(ctx context.Context, offset int64, wait time.Duratio
 	params := url.Values{}
 	params.Set("offset", strconv.FormatInt(offset, 10))
 	params.Set("timeout", strconv.Itoa(int(wait.Seconds())))
-	// Nothing else is acted on, so nothing else is worth being sent or having
-	// to skip past.
-	params.Set("allowed_updates", `["message"]`)
+	// Messages are requests, callback queries are approval decisions. Nothing
+	// else is acted on.
+	params.Set("allowed_updates", `["message","callback_query"]`)
 
 	var updates []Update
 	if err := c.call(ctx, "getUpdates", params, &updates); err != nil {
@@ -205,6 +232,33 @@ func (c *Client) SkipBacklog(ctx context.Context) (int64, error) {
 // be asked to read files; and it is clamped to the Bot API's length limit,
 // because an over-long message is refused outright rather than shortened.
 func (c *Client) SendMessage(ctx context.Context, chatID int64, text string) error {
+	return c.send(ctx, chatID, text, nil)
+}
+
+// SendButtons writes a message with one row of inline buttons under it.
+func (c *Client) SendButtons(ctx context.Context, chatID int64, text string, row ...Button) error {
+	if err := fits(row); err != nil {
+		return err
+	}
+
+	return c.send(ctx, chatID, text, [][]Button{row})
+}
+
+// fits refuses an over-long payload here rather than at Telegram, which would
+// otherwise deliver the message with no buttons on it.
+func fits(row []Button) error {
+	for _, button := range row {
+		if len(button.Data) > MaxCallbackDataBytes {
+			return fmt.Errorf("callback data for %q is %d bytes, over the %d allowed", button.Text, len(button.Data), MaxCallbackDataBytes)
+		}
+	}
+
+	return nil
+}
+
+// send is the one place a message leaves, so the scrub and the clamp live here
+// whether or not a keyboard goes with it.
+func (c *Client) send(ctx context.Context, chatID int64, text string, keyboard [][]Button) error {
 	body := Clamp(c.Scrub(text))
 
 	// Telegram rejects an empty message, and a command that printed nothing is
@@ -220,20 +274,85 @@ func (c *Client) SendMessage(ctx context.Context, chatID int64, text string) err
 	// and code, where an unpaired _ or * is ordinary; asking Telegram to read
 	// that as Markdown would have it refuse the message over punctuation.
 
+	if keyboard != nil {
+		markup, err := markup(keyboard)
+		if err != nil {
+			return err
+		}
+
+		params.Set("reply_markup", markup)
+	}
+
 	return c.call(ctx, "sendMessage", params, nil)
+}
+
+// AnswerCallbackQuery clears the spinner Telegram shows on a tapped button.
+// Notice, when set, pops up briefly in the client.
+func (c *Client) AnswerCallbackQuery(ctx context.Context, queryID, notice string) error {
+	params := url.Values{}
+	params.Set("callback_query_id", queryID)
+	if notice != "" {
+		params.Set("text", clamp(c.Scrub(notice), MaxNoticeRunes))
+	}
+
+	return c.call(ctx, "answerCallbackQuery", params, nil)
+}
+
+// EditButtons replaces a sent message's keyboard, leaving its text alone.
+// Passing no buttons removes the keyboard instead.
+func (c *Client) EditButtons(ctx context.Context, chatID, messageID int64, row ...Button) error {
+	if err := fits(row); err != nil {
+		return err
+	}
+
+	var keyboard [][]Button
+	if len(row) > 0 {
+		keyboard = [][]Button{row}
+	}
+
+	replacement, err := markup(keyboard)
+	if err != nil {
+		return err
+	}
+
+	params := url.Values{}
+	params.Set("chat_id", strconv.FormatInt(chatID, 10))
+	params.Set("message_id", strconv.FormatInt(messageID, 10))
+	params.Set("reply_markup", replacement)
+
+	return c.call(ctx, "editMessageReplyMarkup", params, nil)
+}
+
+// markup encodes a keyboard the way the Bot API wants it: JSON inside a form
+// field, not nested form values.
+func markup(keyboard [][]Button) (string, error) {
+	if keyboard == nil {
+		keyboard = [][]Button{}
+	}
+
+	encoded, err := json.Marshal(struct {
+		InlineKeyboard [][]Button `json:"inline_keyboard"`
+	}{keyboard})
+	if err != nil {
+		return "", fmt.Errorf("cannot encode the keyboard: %w", err)
+	}
+
+	return string(encoded), nil
 }
 
 // Clamp shortens text to what the Bot API will accept, keeping the beginning,
 // which is where a command says what it did. The notice is counted inside the
 // limit rather than added past it.
-func Clamp(text string) string {
+func Clamp(text string) string { return clamp(text, MaxMessageRunes) }
+
+func clamp(text string, limit int) string {
 	runes := []rune(text)
-	if len(runes) <= MaxMessageRunes {
+	if len(runes) <= limit {
 		return text
 	}
 
 	const notice = "\n…[truncated]"
-	keep := MaxMessageRunes - len([]rune(notice))
+	keep := limit - len([]rune(notice))
 
 	return string(runes[:keep]) + notice
 }
