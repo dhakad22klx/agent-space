@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	humanintheloop "agent-harness/agent/human-in-the-loop"
@@ -49,7 +51,15 @@ const pausedForApproval = "Processed for Human approval"
 const (
 	approvalPending  = "PENDING"
 	approvalApproved = "APPROVED"
+	approvalRejected = "REJECTED"
 )
+
+// ApprovalNotifier announces a call waiting on a human. A func rather than an
+// import, so this package stays free of whatever does the asking.
+//
+// It must announce and return: calling back into the Agent, or waiting for the
+// decision it is announcing, deadlocks against the turn lock held over it.
+type ApprovalNotifier func(ctx context.Context, sessionID string, pending state.PendingApproval)
 
 // Agent runs the ask-model / run-tools / ask-again loop and keeps the
 // conversation history across turns.
@@ -68,6 +78,20 @@ type Agent struct {
 	// OnToolCall, when set, runs after each tool call so the UI can show what
 	// the agent is doing.
 	OnToolCall func(call providers.ToolCall, result providers.ToolResult)
+
+	// onApprovalNeeded, when set, tells whoever can approve that a call is
+	// held. Unexported and guarded by mu because, unlike OnToolCall, it is
+	// re-pointed while the poll goroutine may be reading it.
+	onApprovalNeeded ApprovalNotifier
+}
+
+// SetApprovalNotifier points the pause at whoever should be told, or nil when
+// nothing is listening.
+func (a *Agent) SetApprovalNotifier(notify ApprovalNotifier) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.onApprovalNeeded = notify
 }
 
 // New builds an agent over a provider and the tools it is allowed to use.
@@ -178,22 +202,21 @@ func (a *Agent) Run(ctx context.Context, prompt string, sessionID string) (strin
 // The conversation comes from the store rather than from this process, so a run
 // paused elsewhere resumes here with the history it actually had.
 func (a *Agent) Resume(ctx context.Context, sessionID string) (string, error) {
+	return a.ResumeApproval(ctx, sessionID, "")
+}
+
+// ResumeApproval is Resume for a decision that names the pause it answers. An
+// empty approvalID skips that check.
+func (a *Agent) ResumeApproval(ctx context.Context, sessionID string, approvalID string) (string, error) {
 	store, err := state.OpenRedis(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer store.Close()
 
-	var saved state.AgentState
-	found, err := store.Get(ctx, sessionID, &saved)
+	saved, err := held(ctx, store, sessionID, approvalID)
 	if err != nil {
 		return "", err
-	}
-	if !found {
-		return "", fmt.Errorf("no paused run saved for session %s", sessionID)
-	}
-	if saved.PendingApproval == nil {
-		return "", fmt.Errorf("session %s is %s, with nothing waiting on approval", sessionID, saved.Status)
 	}
 
 	// The decision is recorded before anything acts on it, so a resume that
@@ -264,6 +287,62 @@ func needHumanApproval(toolName string) bool {
 	return humanintheloop.RequiresApproval(toolName)
 }
 
+// Decline drops a held call: the decision is recorded and the run stops there.
+// Nothing runs and the history is untouched.
+func (a *Agent) Decline(ctx context.Context, sessionID string, approvalID string) (string, error) {
+	store, err := state.OpenRedis(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer store.Close()
+
+	saved, err := held(ctx, store, sessionID, approvalID)
+	if err != nil {
+		return "", err
+	}
+
+	call := saved.PendingApproval.ToolCall
+	saved.PendingApproval.ApprovalStatus = approvalRejected
+
+	// Off StatusWaitingApproval is what makes the run un-resumable. Nothing
+	// failed, so completed rather than failed.
+	saved.Status = state.StatusCompleted
+	if err := store.Put(ctx, sessionID, saved); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("Declined. %s was not run.", call.Name), nil
+}
+
+// held loads a run that is genuinely waiting on the decision being made.
+//
+// The three checks are one race each: a run that has moved on, a second tap on
+// a call already decided, and a button from an earlier pause of the same
+// session. Sound within one process, where the poll dispatches taps one at a
+// time; two processes on one Redis could both pass, since this is not atomic.
+func held(ctx context.Context, store state.Store, sessionID string, approvalID string) (state.AgentState, error) {
+	var saved state.AgentState
+
+	found, err := store.Get(ctx, sessionID, &saved)
+	if err != nil {
+		return saved, err
+	}
+	if !found {
+		return saved, fmt.Errorf("no paused run saved for session %s", sessionID)
+	}
+	if !saved.Waiting() {
+		return saved, fmt.Errorf("session %s is %s, with nothing waiting on approval", sessionID, saved.Status)
+	}
+	if saved.PendingApproval.ApprovalStatus != approvalPending {
+		return saved, fmt.Errorf("that call was already %s", strings.ToLower(saved.PendingApproval.ApprovalStatus))
+	}
+	if approvalID != "" && saved.PendingApproval.ID != approvalID {
+		return saved, errors.New("that request is no longer the one waiting")
+	}
+
+	return saved, nil
+}
+
 // pause saves the run to the state store and leaves it there. The results
 // already gathered go into the history first, so the state holds everything up
 // to the call that is waiting.
@@ -278,17 +357,29 @@ func (a *Agent) pause(ctx context.Context, sessionID string, call providers.Tool
 	}
 	defer store.Close()
 
-	return store.Put(ctx, sessionID, state.AgentState{
-		SessionID: sessionID,
-		History:   a.history,
-		PendingApproval: &state.PendingApproval{
-			ID:             uuid.NewString(),
-			ToolCall:       call,
-			ApprovalStatus: approvalPending,
-		},
-		Status: state.StatusWaitingApproval,
-		Step:   step,
-	})
+	pending := state.PendingApproval{
+		ID:             uuid.NewString(),
+		ToolCall:       call,
+		ApprovalStatus: approvalPending,
+	}
+
+	if err := store.Put(ctx, sessionID, state.AgentState{
+		SessionID:       sessionID,
+		History:         a.history,
+		PendingApproval: &pending,
+		Status:          state.StatusWaitingApproval,
+		Step:            step,
+	}); err != nil {
+		return err
+	}
+
+	// Announced only once the state is saved: the decision may come back from
+	// another process, and it has to find the run already there.
+	if a.onApprovalNeeded != nil {
+		a.onApprovalNeeded(ctx, sessionID, pending)
+	}
+
+	return nil
 }
 
 // Reset forgets the conversation so far. One agent answers everywhere, so
