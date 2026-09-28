@@ -24,7 +24,8 @@ Agent Harness written in Go.
    MOCK_AGENT_CALL="false"
    ```
 
-   Set `MOCK_AGENT_CALL` to `true` to start without making model requests. Set `HITL_ENABLED` to `true` to hold the tool calls listed in `agent/human-in-the-loop/hitl_config.yml` for human approval. The example `.env` uses in-memory state, so approvals, including those sent through a paired Telegram account, work without Redis while the process is running.
+   Set `MOCK_AGENT_CALL` to `true` to start without making model requests. Set `HITL_ENABLED` to `true` to hold the tool calls listed in `agent/human-in-the-loop/hitl_config.yml` for human approval. Both `inmemory` and `redis` support approvals, including those sent through a paired Telegram account. 
+   The `inmemory` backend requires no Redis configuration and keeps state only while the agent is running. The `redis` backend requires Redis configuration and supports persistent state shared across instances. See [Agent state storage](#agent-state-storage) for configuration details.
 
 3. Run the test suite from the repository root:
 
