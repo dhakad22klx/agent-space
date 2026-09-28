@@ -65,7 +65,11 @@ func Open(ctx context.Context) (Store, error) {
 		}
 		return NewInMemoryStore(ttl), nil
 	case "redis":
-		return openRedis(ctx, env)
+		store, err := openRedis(ctx, env)
+		if err != nil {
+			return nil, err
+		}
+		return store, nil
 	default:
 		return nil, fmt.Errorf("state.backend in %s: %w %q: use inmemory or redis", ConfigFile, ErrInvalidBackend, backend)
 	}

@@ -115,3 +115,32 @@ func TestOpenInMemoryTTL(t *testing.T) {
 		})
 	}
 }
+
+// Open returns an interface: a nil *RedisStore must not escape as a non-nil
+// Store when initialization fails, otherwise callers can panic during cleanup.
+func TestOpenRedisFailureReturnsNilStore(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  string
+	}{
+		{"missing address", "HITL_STATE_STORE=redis\n"},
+		{"invalid TTL", "HITL_STATE_STORE=redis\nREDIS_ADDR=unused:6379\nHITL_STATE_TTL=invalid\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			if err := os.WriteFile(".env", []byte(tc.env), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := Open(context.Background())
+			if err == nil {
+				if store != nil {
+					_ = store.Close()
+				}
+				t.Fatal("Open succeeded with invalid Redis configuration")
+			}
+			if store != nil {
+				t.Fatalf("Open returned a non-nil Store (%T) after failure: %v", store, err)
+			}
+		})
+	}
+}

@@ -41,25 +41,29 @@ Agent Harness written in Go.
 
 ## Agent state storage
 
-Select a backend in `.env` with `HITL_STATE_STORE="inmemory"` or
-`HITL_STATE_STORE="redis"`. Alternatively, create `justsay-config.yml` in the
-repository root:
+Select a backend in `justsay-config.yml` in the repository root. The bundled
+file selects `inmemory`:
 
 ```yaml
 state:
   backend: inmemory
 ```
 
-For Redis:
+To select Redis, change that file to:
 
 ```yaml
 state:
   backend: redis
 ```
 
-`state.backend` takes precedence over `HITL_STATE_STORE`. If neither is set,
-the backend defaults to `inmemory`. Select `redis` explicitly to use Redis. Unknown
-backends cause an error. The agent opens its store on the first pause or
+To select through `.env` instead, remove `state.backend` from the YAML file
+(or remove the file), then set `HITL_STATE_STORE="inmemory"` or
+`HITL_STATE_STORE="redis"` in `.env`. A non-empty `state.backend` overrides
+`.env`, so changing `.env` alone does not override the bundled configuration.
+
+If neither is set, the backend defaults to `inmemory`. Select `redis` explicitly
+to use Redis. Unknown backends cause an error, including an invalid
+`HITL_STATE_STORE` when YAML overrides it. The agent opens its store on the first pause or
 approval and retains it until shutdown; restart to apply configuration changes.
 
 The `inmemory` backend requires no Redis connection or configuration. State is
