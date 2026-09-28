@@ -135,7 +135,7 @@ func TestHitlDisabledRunsTheGatedTool(t *testing.T) {
 func TestHitlEnabledPausesTheGatedTool(t *testing.T) {
 	redis := miniredis.RunT(t)
 
-	env := "MOCK_AGENT_CALL=\"false\"\nHITL_ENABLED=\"true\"\nREDIS_ADDR=\"" + redis.Addr() + "\"\n"
+	env := "MOCK_AGENT_CALL=\"false\"\nHITL_ENABLED=\"true\"\nHITL_STATE_STORE=redis\nREDIS_ADDR=\"" + redis.Addr() + "\"\n"
 	hitlWorkspace(t, env, gatedConfig)
 
 	if !humanintheloop.RequiresApproval("send_updates_to_manager") {

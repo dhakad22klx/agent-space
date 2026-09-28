@@ -58,7 +58,7 @@ state:
 ```
 
 `state.backend` takes precedence over `HITL_STATE_STORE`. If neither is set,
-the backend defaults to `redis` to preserve existing deployments. Unknown
+the backend defaults to `inmemory`. Select `redis` explicitly to use Redis. Unknown
 backends cause an error. The agent opens its store on the first pause or
 approval and retains it until shutdown; restart to apply configuration changes.
 
