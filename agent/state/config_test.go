@@ -29,6 +29,8 @@ func TestOpenBackend(t *testing.T) {
 		{name: "blank settings use default", env: "HITL_STATE_STORE=", yaml: "state:\n  backend: ''\n", backend: "inmemory"},
 		{name: "Redis requires address", env: "HITL_STATE_STORE=redis", err: "REDIS_ADDR"},
 		{name: "unknown backend", env: "HITL_STATE_STORE=unknown", err: "unsupported state backend"},
+		{name: "invalid env backend with memory override", env: "HITL_STATE_STORE=unknown", yaml: "state:\n  backend: inmemory\n", err: "HITL_STATE_STORE in .env: unsupported state backend"},
+		{name: "invalid env backend with redis override", env: "HITL_STATE_STORE=unknown", yaml: "state:\n  backend: redis\n", err: "HITL_STATE_STORE in .env: unsupported state backend"},
 		{name: "invalid YAML", yaml: "state: [", err: "parse " + ConfigFile},
 		{name: "invalid env", env: "HITL_STATE_STORE=\"unterminated", err: "read .env"},
 		{name: "invalid TTL", env: "HITL_STATE_STORE=inmemory\nHITL_STATE_TTL=bad", err: "not a duration"},

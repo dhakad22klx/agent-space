@@ -17,6 +17,7 @@ const ConfigFile = "justsay-config.yml"
 
 // Open creates a store using state.backend in justsay-config.yml, then
 // HITL_STATE_STORE in .env, falling back to inmemory when neither is set.
+// A non-empty HITL_STATE_STORE must be valid even when YAML overrides it.
 // In-memory storage does not read Redis options or open a Redis connection.
 // The caller must retain the returned store for as long as it needs its state.
 func Open(ctx context.Context) (Store, error) {
@@ -26,6 +27,12 @@ func Open(ctx context.Context) (Store, error) {
 	}
 
 	backend := strings.TrimSpace(env["HITL_STATE_STORE"])
+	switch strings.ToLower(backend) {
+	case "", "inmemory", "redis":
+	default:
+		return nil, fmt.Errorf("HITL_STATE_STORE in .env: unsupported state backend %q: use inmemory or redis", backend)
+	}
+
 	data, err := os.ReadFile(ConfigFile)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read %s: %w", ConfigFile, err)
