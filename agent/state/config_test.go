@@ -1,0 +1,146 @@
+package state
+
+import (
+	"context"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+)
+
+func TestOpenBackend(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		env     string
+		yaml    string
+		backend string
+		err     string
+		errIs   error
+	}{
+		{name: "memory without Redis", env: "HITL_STATE_STORE=inmemory", backend: "inmemory"},
+		{name: "memory ignores Redis options", env: "HITL_STATE_STORE=inmemory\nREDIS_ADDR=invalid\nREDIS_DB=invalid", backend: "inmemory"},
+		{name: "YAML without env", yaml: "state:\n  backend: inmemory\n", backend: "inmemory"},
+		{name: "YAML overrides env", env: "HITL_STATE_STORE=redis", yaml: "state:\n  backend: inmemory\n", backend: "inmemory"},
+		{name: "empty YAML uses env", env: "HITL_STATE_STORE=inmemory", yaml: "state: {}", backend: "inmemory"},
+		{name: "redis env", env: "HITL_STATE_STORE=redis", backend: "redis"},
+		{name: "redis YAML", env: "HITL_STATE_STORE=inmemory", yaml: "state:\n  backend: redis\n", backend: "redis"},
+		{name: "default needs no configuration", backend: "inmemory"},
+		{name: "blank settings use default", env: "HITL_STATE_STORE=", yaml: "state:\n  backend: ''\n", backend: "inmemory"},
+		{name: "Redis requires address", env: "HITL_STATE_STORE=redis", err: "REDIS_ADDR"},
+		{name: "unknown backend", env: "HITL_STATE_STORE=unknown", errIs: ErrInvalidBackend},
+		{name: "invalid env backend with memory override", env: "HITL_STATE_STORE=unknown", yaml: "state:\n  backend: inmemory\n", errIs: ErrInvalidBackend},
+		{name: "invalid env backend with redis override", env: "HITL_STATE_STORE=unknown", yaml: "state:\n  backend: redis\n", errIs: ErrInvalidBackend},
+		{name: "invalid YAML backend", env: "HITL_STATE_STORE=inmemory", yaml: "state:\n  backend: unknown\n", errIs: ErrInvalidBackend},
+		{name: "invalid YAML", yaml: "state: [", err: "parse " + ConfigFile},
+		{name: "invalid env", env: "HITL_STATE_STORE=\"unterminated", err: "read .env"},
+		{name: "invalid TTL", env: "HITL_STATE_STORE=inmemory\nHITL_STATE_TTL=bad", err: "not a duration"},
+		{name: "negative TTL", env: "HITL_STATE_STORE=inmemory\nHITL_STATE_TTL=-1s", err: "negative"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			env := tc.env
+			if tc.backend == "redis" {
+				server := miniredis.RunT(t)
+				env += "\nREDIS_ADDR=" + server.Addr()
+			}
+			if env != "" {
+				if err := os.WriteFile(".env", []byte(env), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.yaml != "" {
+				if err := os.WriteFile(ConfigFile, []byte(tc.yaml), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			store, err := Open(context.Background())
+			if err == nil && store != nil {
+				t.Cleanup(func() { _ = store.Close() })
+			}
+			if tc.errIs != nil {
+				if !errors.Is(err, tc.errIs) {
+					t.Fatalf("Open error = %v, want errors.Is(err, %v)", err, tc.errIs)
+				}
+				return
+			}
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("Open error = %v, want %q", err, tc.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch store.(type) {
+			case *InMemoryStore:
+				if tc.backend != "inmemory" {
+					t.Fatalf("got in-memory, want %s", tc.backend)
+				}
+			case *RedisStore:
+				if tc.backend != "redis" {
+					t.Fatalf("got redis, want %s", tc.backend)
+				}
+			default:
+				t.Fatalf("unexpected store %T", store)
+			}
+			if err := store.Put(context.Background(), "key", "value"); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestOpenInMemoryTTL(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want time.Duration
+	}{{"", DefaultTTL}, {"0", 0}, {"5m", 5 * time.Minute}} {
+		t.Run(tc.raw, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			if err := os.WriteFile(".env", []byte("HITL_STATE_STORE=inmemory\nHITL_STATE_TTL="+tc.raw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := Open(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			if got := store.(*InMemoryStore).TTL(); got != tc.want {
+				t.Fatalf("TTL = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Open returns an interface: a nil *RedisStore must not escape as a non-nil
+// Store when initialization fails, otherwise callers can panic during cleanup.
+func TestOpenRedisFailureReturnsNilStore(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  string
+	}{
+		{"missing address", "HITL_STATE_STORE=redis\n"},
+		{"invalid TTL", "HITL_STATE_STORE=redis\nREDIS_ADDR=unused:6379\nHITL_STATE_TTL=invalid\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			if err := os.WriteFile(".env", []byte(tc.env), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := Open(context.Background())
+			if err == nil {
+				if store != nil {
+					_ = store.Close()
+				}
+				t.Fatal("Open succeeded with invalid Redis configuration")
+			}
+			if store != nil {
+				t.Fatalf("Open returned a non-nil Store (%T) after failure: %v", store, err)
+			}
+		})
+	}
+}

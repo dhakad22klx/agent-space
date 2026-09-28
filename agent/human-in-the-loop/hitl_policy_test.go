@@ -135,7 +135,7 @@ func TestHitlDisabledRunsTheGatedTool(t *testing.T) {
 func TestHitlEnabledPausesTheGatedTool(t *testing.T) {
 	redis := miniredis.RunT(t)
 
-	env := "MOCK_AGENT_CALL=\"false\"\nHITL_ENABLED=\"true\"\nREDIS_ADDR=\"" + redis.Addr() + "\"\n"
+	env := "MOCK_AGENT_CALL=\"false\"\nHITL_ENABLED=\"true\"\nHITL_STATE_STORE=redis\nREDIS_ADDR=\"" + redis.Addr() + "\"\n"
 	hitlWorkspace(t, env, gatedConfig)
 
 	if !humanintheloop.RequiresApproval("send_updates_to_manager") {
@@ -145,6 +145,7 @@ func TestHitlEnabledPausesTheGatedTool(t *testing.T) {
 	tool := &gatedTool{name: "send_updates_to_manager"}
 	provider := callThenAnswer(tool.name)
 	a := agent.New(provider, tools.NewRegistry(tool))
+	t.Cleanup(func() { _ = a.Close() })
 
 	var announced []state.PendingApproval
 	a.SetApprovalNotifier(func(_ context.Context, _ string, pending state.PendingApproval) {
@@ -178,6 +179,54 @@ func TestHitlEnabledPausesTheGatedTool(t *testing.T) {
 	// come back to.
 	if len(redis.Keys()) == 0 {
 		t.Error("nothing was saved to the state store, so the run cannot be resumed")
+	}
+}
+
+// Decisions reuse the store that held the run, even after the first call ends.
+// Run this for both backends to protect the existing Redis approval path too.
+func TestApprovalStateBackends(t *testing.T) {
+	for _, backend := range []string{"inmemory", "redis"} {
+		for _, decision := range []string{"approve", "decline"} {
+			t.Run(backend+"/"+decision, func(t *testing.T) {
+				env := "MOCK_AGENT_CALL=false\nHITL_ENABLED=true\nHITL_STATE_STORE=" + backend + "\n"
+				if backend == "redis" {
+					server := miniredis.RunT(t)
+					env += "REDIS_ADDR=" + server.Addr() + "\n"
+				}
+				hitlWorkspace(t, env, gatedConfig)
+				tool := &gatedTool{name: "send_updates_to_manager"}
+				a := agent.New(callThenAnswer(tool.name), tools.NewRegistry(tool))
+				t.Cleanup(func() { _ = a.Close() })
+				var pending state.PendingApproval
+				a.SetApprovalNotifier(func(_ context.Context, _ string, p state.PendingApproval) { pending = p })
+				ctx := context.Background()
+				if _, err := a.Run(ctx, "tell my manager", "session"); err != nil {
+					t.Fatal(err)
+				}
+				if pending.ID == "" || tool.ran != 0 {
+					t.Fatalf("call did not pause: pending=%+v, ran=%d", pending, tool.ran)
+				}
+				if _, err := a.ResumeApproval(ctx, "session", "stale-approval"); err == nil {
+					t.Fatal("stale approval was accepted")
+				}
+				if decision == "approve" {
+					answer, err := a.ResumeApproval(ctx, "session", pending.ID)
+					if err != nil || answer != "Sent." || tool.ran != 1 {
+						t.Fatalf("Resume = %q, %v; tool ran %d times", answer, err, tool.ran)
+					}
+				} else {
+					if _, err := a.Decline(ctx, "session", pending.ID); err != nil {
+						t.Fatal(err)
+					}
+					if tool.ran != 0 {
+						t.Fatal("declined tool ran")
+					}
+				}
+				if _, err := a.ResumeApproval(ctx, "session", pending.ID); err == nil {
+					t.Fatal("settled approval was accepted again")
+				}
+			})
+		}
 	}
 }
 

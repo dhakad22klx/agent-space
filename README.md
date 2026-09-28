@@ -24,7 +24,8 @@ Agent Harness written in Go.
    MOCK_AGENT_CALL="false"
    ```
 
-   Set `MOCK_AGENT_CALL` to `true` to start without making model requests. Set `HITL_ENABLED` to `true` to hold the tool calls listed in `agent/human-in-the-loop/hitl_config.yml` for human approval, and configure the `REDIS_*` values for those approvals, including approvals sent through a paired Telegram account, since paused approvals are stored in Redis.
+   Set `MOCK_AGENT_CALL` to `true` to start without making model requests. Set `HITL_ENABLED` to `true` to hold the tool calls listed in `agent/human-in-the-loop/hitl_config.yml` for human approval. Both `inmemory` and `redis` support approvals, including those sent through a paired Telegram account. 
+   The `inmemory` backend requires no Redis configuration and keeps state only while the agent is running. The `redis` backend requires Redis configuration and supports persistent state shared across instances. See [Agent state storage](#agent-state-storage) for configuration details.
 
 3. Run the test suite from the repository root:
 
@@ -37,6 +38,43 @@ Agent Harness written in Go.
    ```bash
    go run .
    ```
+
+## Agent state storage
+
+Select a backend in `justsay-config.yml` in the repository root. The bundled
+file selects `inmemory`:
+
+```yaml
+state:
+  backend: inmemory
+```
+
+To select Redis, change that file to:
+
+```yaml
+state:
+  backend: redis
+```
+
+To select through `.env` instead, remove `state.backend` from the YAML file
+(or remove the file), then set `HITL_STATE_STORE="inmemory"` or
+`HITL_STATE_STORE="redis"` in `.env`. A non-empty `state.backend` overrides
+`.env`, so changing `.env` alone does not override the bundled configuration.
+
+If neither is set, the backend defaults to `inmemory`. Select `redis` explicitly
+to use Redis. Unknown backends cause an error, including an invalid
+`HITL_STATE_STORE` when YAML overrides it. The agent opens its store on the first pause or
+approval and retains it until shutdown; restart to apply configuration changes.
+
+The `inmemory` backend requires no Redis connection or configuration. State is
+local to the running agent and is lost when it closes or the process restarts.
+Use `redis` for persistent state or state shared across instances. Redis requires
+`REDIS_ADDR` in `.env`; `REDIS_PASSWORD`, `REDIS_DB` (a numeric database index),
+and `REDIS_KEY_PREFIX` configure authentication, database, and key namespace.
+
+Both backends use `HITL_STATE_TTL` from `.env` (default `24h`). Each save restarts
+the expiry; `HITL_STATE_TTL="0"` disables it. In-memory entries expire on read
+and are also cleaned up periodically during writes.
 
 ## CLI commands
 
