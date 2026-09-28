@@ -15,6 +15,9 @@ import (
 // ConfigFile optionally selects the state backend from the working directory.
 const ConfigFile = "justsay-config.yml"
 
+// ErrInvalidBackend identifies an unsupported state backend in configuration.
+var ErrInvalidBackend = errors.New("invalid state backend")
+
 // Open creates a store using state.backend in justsay-config.yml, then
 // HITL_STATE_STORE in .env, falling back to inmemory when neither is set.
 // A non-empty HITL_STATE_STORE must be valid even when YAML overrides it.
@@ -30,7 +33,7 @@ func Open(ctx context.Context) (Store, error) {
 	switch strings.ToLower(backend) {
 	case "", "inmemory", "redis":
 	default:
-		return nil, fmt.Errorf("HITL_STATE_STORE in .env: unsupported state backend %q: use inmemory or redis", backend)
+		return nil, fmt.Errorf("HITL_STATE_STORE in .env: %w %q: use inmemory or redis", ErrInvalidBackend, backend)
 	}
 
 	data, err := os.ReadFile(ConfigFile)
@@ -64,7 +67,7 @@ func Open(ctx context.Context) (Store, error) {
 	case "redis":
 		return openRedis(ctx, env)
 	default:
-		return nil, fmt.Errorf("unsupported state backend %q: use inmemory or redis", backend)
+		return nil, fmt.Errorf("state.backend in %s: %w %q: use inmemory or redis", ConfigFile, ErrInvalidBackend, backend)
 	}
 }
 

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ func TestOpenBackend(t *testing.T) {
 		yaml    string
 		backend string
 		err     string
+		errIs   error
 	}{
 		{name: "memory without Redis", env: "HITL_STATE_STORE=inmemory", backend: "inmemory"},
 		{name: "memory ignores Redis options", env: "HITL_STATE_STORE=inmemory\nREDIS_ADDR=invalid\nREDIS_DB=invalid", backend: "inmemory"},
@@ -28,9 +30,10 @@ func TestOpenBackend(t *testing.T) {
 		{name: "default needs no configuration", backend: "inmemory"},
 		{name: "blank settings use default", env: "HITL_STATE_STORE=", yaml: "state:\n  backend: ''\n", backend: "inmemory"},
 		{name: "Redis requires address", env: "HITL_STATE_STORE=redis", err: "REDIS_ADDR"},
-		{name: "unknown backend", env: "HITL_STATE_STORE=unknown", err: "unsupported state backend"},
-		{name: "invalid env backend with memory override", env: "HITL_STATE_STORE=unknown", yaml: "state:\n  backend: inmemory\n", err: "HITL_STATE_STORE in .env: unsupported state backend"},
-		{name: "invalid env backend with redis override", env: "HITL_STATE_STORE=unknown", yaml: "state:\n  backend: redis\n", err: "HITL_STATE_STORE in .env: unsupported state backend"},
+		{name: "unknown backend", env: "HITL_STATE_STORE=unknown", errIs: ErrInvalidBackend},
+		{name: "invalid env backend with memory override", env: "HITL_STATE_STORE=unknown", yaml: "state:\n  backend: inmemory\n", errIs: ErrInvalidBackend},
+		{name: "invalid env backend with redis override", env: "HITL_STATE_STORE=unknown", yaml: "state:\n  backend: redis\n", errIs: ErrInvalidBackend},
+		{name: "invalid YAML backend", env: "HITL_STATE_STORE=inmemory", yaml: "state:\n  backend: unknown\n", errIs: ErrInvalidBackend},
 		{name: "invalid YAML", yaml: "state: [", err: "parse " + ConfigFile},
 		{name: "invalid env", env: "HITL_STATE_STORE=\"unterminated", err: "read .env"},
 		{name: "invalid TTL", env: "HITL_STATE_STORE=inmemory\nHITL_STATE_TTL=bad", err: "not a duration"},
@@ -54,6 +57,15 @@ func TestOpenBackend(t *testing.T) {
 				}
 			}
 			store, err := Open(context.Background())
+			if err == nil && store != nil {
+				t.Cleanup(func() { _ = store.Close() })
+			}
+			if tc.errIs != nil {
+				if !errors.Is(err, tc.errIs) {
+					t.Fatalf("Open error = %v, want errors.Is(err, %v)", err, tc.errIs)
+				}
+				return
+			}
 			if tc.err != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.err) {
 					t.Fatalf("Open error = %v, want %q", err, tc.err)
@@ -63,7 +75,6 @@ func TestOpenBackend(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = store.Close() })
 			switch store.(type) {
 			case *InMemoryStore:
 				if tc.backend != "inmemory" {
