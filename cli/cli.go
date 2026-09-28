@@ -66,6 +66,11 @@ func StartCli() {
 	// after it attributable. Writing the field at startup, before the poll's
 	// goroutine exists, is also what keeps the read in that goroutine safe.
 	if assistant != nil {
+		defer func() {
+			if err := assistant.Close(); err != nil {
+				out.Errorf("error closing agent state: %v", err)
+			}
+		}()
 		assistant.OnToolCall = func(call providers.ToolCall, result providers.ToolResult) {
 			out.Tracef("Tool Call· %s(%s)", call.Name, formatArgs(call.Args))
 			if result.IsError {

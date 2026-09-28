@@ -24,7 +24,7 @@ Agent Harness written in Go.
    MOCK_AGENT_CALL="false"
    ```
 
-   Set `MOCK_AGENT_CALL` to `true` to start without making model requests. Set `HITL_ENABLED` to `true` to hold the tool calls listed in `agent/human-in-the-loop/hitl_config.yml` for human approval, and configure the `REDIS_*` values for those approvals, including approvals sent through a paired Telegram account, since paused approvals are stored in Redis.
+   Set `MOCK_AGENT_CALL` to `true` to start without making model requests. Set `HITL_ENABLED` to `true` to hold the tool calls listed in `agent/human-in-the-loop/hitl_config.yml` for human approval. The example `.env` uses in-memory state, so approvals, including those sent through a paired Telegram account, work without Redis while the process is running.
 
 3. Run the test suite from the repository root:
 
@@ -37,6 +37,39 @@ Agent Harness written in Go.
    ```bash
    go run .
    ```
+
+## Agent state storage
+
+Select a backend in `.env` with `HITL_STATE_STORE="inmemory"` or
+`HITL_STATE_STORE="redis"`. Alternatively, create `justsay-config.yml` in the
+repository root:
+
+```yaml
+state:
+  backend: inmemory
+```
+
+For Redis:
+
+```yaml
+state:
+  backend: redis
+```
+
+`state.backend` takes precedence over `HITL_STATE_STORE`. If neither is set,
+the backend defaults to `redis` to preserve existing deployments. Unknown
+backends cause an error. The agent opens its store on the first pause or
+approval and retains it until shutdown; restart to apply configuration changes.
+
+The `inmemory` backend requires no Redis connection or configuration. State is
+local to the running agent and is lost when it closes or the process restarts.
+Use `redis` for persistent state or state shared across instances. Redis requires
+`REDIS_ADDR` in `.env`; `REDIS_PASSWORD`, `REDIS_DB` (a numeric database index),
+and `REDIS_KEY_PREFIX` configure authentication, database, and key namespace.
+
+Both backends use `HITL_STATE_TTL` from `.env` (default `24h`). Each save restarts
+the expiry; `HITL_STATE_TTL="0"` disables it. In-memory entries expire on read
+and are also cleaned up periodically during writes.
 
 ## CLI commands
 

@@ -76,6 +76,11 @@ type Agent struct {
 	mu      sync.Mutex
 	history []providers.Message
 
+	// Keep one store across pauses and decisions, including in-memory state.
+	stateMu     sync.Mutex
+	store       state.Store
+	stateClosed bool
+
 	// OnToolCall, when set, runs after each tool call so the UI can show what
 	// the agent is doing.
 	OnToolCall func(call providers.ToolCall, result providers.ToolResult)
@@ -102,6 +107,39 @@ func New(provider providers.IProvider, registry *tools.Registry) *Agent {
 		tools:    registry,
 		maxSteps: defaultMaxSteps,
 	}
+}
+
+// stateStore opens the configured backend on first use. Failed opens can be
+// retried, and ordinary turns that never pause need no state connection.
+func (a *Agent) stateStore(ctx context.Context) (state.Store, error) {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	if a.stateClosed {
+		return nil, errors.New("agent state store is closed")
+	}
+	if a.store == nil {
+		store, err := state.Open(ctx)
+		if err != nil {
+			return nil, err
+		}
+		a.store = store
+	}
+	return a.store, nil
+}
+
+// Close releases the agent's state store. Call after stopping its callers.
+// In-memory state is discarded. Repeated calls are harmless.
+func (a *Agent) Close() error {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	if a.stateClosed {
+		return nil
+	}
+	a.stateClosed = true
+	if a.store != nil {
+		return a.store.Close()
+	}
+	return nil
 }
 
 // The one agent this process runs. Two things reach for it — the prompt and the
@@ -201,7 +239,7 @@ func (a *Agent) Run(ctx context.Context, prompt string, sessionID string) (strin
 // runs the call the human approved, and carries on from the step the pause
 // stopped at.
 //
-// The conversation comes from the store rather than from this process, so a run
+// The conversation comes from the stored snapshot. With a shared backend, a run
 // paused elsewhere resumes here with the history it actually had.
 func (a *Agent) Resume(ctx context.Context, sessionID string) (string, error) {
 	return a.ResumeApproval(ctx, sessionID, "")
@@ -210,13 +248,10 @@ func (a *Agent) Resume(ctx context.Context, sessionID string) (string, error) {
 // ResumeApproval is Resume for a decision that names the pause it answers. An
 // empty approvalID skips that check.
 func (a *Agent) ResumeApproval(ctx context.Context, sessionID string, approvalID string) (string, error) {
-	store, err := state.OpenRedis(ctx)
+	store, err := a.stateStore(ctx)
 	if err != nil {
 		return "", err
 	}
-	// Redis operations are acknowledged before pool cleanup. A close failure
-	// must not turn a completed operation into a retryable failure.
-	defer func() { _ = store.Close() }()
 
 	saved, err := held(ctx, store, sessionID, approvalID)
 	if err != nil {
@@ -294,13 +329,10 @@ func needHumanApproval(toolName string) bool {
 // Decline drops a held call: the decision is recorded and the run stops there.
 // Nothing runs and the history is untouched.
 func (a *Agent) Decline(ctx context.Context, sessionID string, approvalID string) (string, error) {
-	store, err := state.OpenRedis(ctx)
+	store, err := a.stateStore(ctx)
 	if err != nil {
 		return "", err
 	}
-	// Redis operations are acknowledged before pool cleanup. A close failure
-	// must not turn a completed operation into a retryable failure.
-	defer func() { _ = store.Close() }()
 
 	saved, err := held(ctx, store, sessionID, approvalID)
 	if err != nil {
@@ -357,13 +389,10 @@ func (a *Agent) pause(ctx context.Context, sessionID string, call providers.Tool
 		a.history = append(a.history, providers.Message{Role: providers.RoleTool, ToolResults: done})
 	}
 
-	store, err := state.OpenRedis(ctx)
+	store, err := a.stateStore(ctx)
 	if err != nil {
 		return err
 	}
-	// Redis operations are acknowledged before pool cleanup. A close failure
-	// must not turn a completed operation into a retryable failure.
-	defer func() { _ = store.Close() }()
 
 	pending := state.PendingApproval{
 		ID:             uuid.NewString(),
@@ -381,8 +410,7 @@ func (a *Agent) pause(ctx context.Context, sessionID string, call providers.Tool
 		return err
 	}
 
-	// Announced only once the state is saved: the decision may come back from
-	// another process, and it has to find the run already there.
+	// Announce only after saving, so the decision can find the paused run.
 	if a.onApprovalNeeded != nil {
 		a.onApprovalNeeded(ctx, sessionID, pending)
 	}

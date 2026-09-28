@@ -1,0 +1,81 @@
+package state
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v3"
+)
+
+// ConfigFile optionally selects the state backend from the working directory.
+const ConfigFile = "justsay-config.yml"
+
+// Open creates a store using state.backend in justsay-config.yml, then
+// HITL_STATE_STORE in .env, falling back to redis for existing deployments.
+// In-memory storage does not read Redis options or open a Redis connection.
+// The caller must retain the returned store for as long as it needs its state.
+func Open(ctx context.Context) (Store, error) {
+	env, err := godotenv.Read(".env")
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read .env: %w", err)
+	}
+
+	backend := strings.TrimSpace(env["HITL_STATE_STORE"])
+	data, err := os.ReadFile(ConfigFile)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("read %s: %w", ConfigFile, err)
+	}
+	if err == nil {
+		var cfg struct {
+			State struct {
+				Backend string `yaml:"backend"`
+			} `yaml:"state"`
+		}
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", ConfigFile, err)
+		}
+		if configured := strings.TrimSpace(cfg.State.Backend); configured != "" {
+			backend = configured
+		}
+	}
+	if backend == "" {
+		backend = "redis"
+	}
+
+	switch strings.ToLower(backend) {
+	case "inmemory":
+		ttl, err := parseTTL(env["HITL_STATE_TTL"])
+		if err != nil {
+			return nil, err
+		}
+		return NewInMemoryStore(ttl), nil
+	case "redis":
+		return openRedis(ctx, env)
+	default:
+		return nil, fmt.Errorf("unsupported state backend %q: use inmemory or redis", backend)
+	}
+}
+
+// parseTTL reads HITL_STATE_TTL as a Go duration. Blank means DefaultTTL and
+// zero disables expiry for either backend.
+func parseTTL(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return DefaultTTL, nil
+	}
+
+	ttl, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("HITL_STATE_TTL in .env is not a duration like \"24h\": %w", err)
+	}
+	if ttl < 0 {
+		return 0, fmt.Errorf("HITL_STATE_TTL in .env is negative: %s", raw)
+	}
+
+	return ttl, nil
+}

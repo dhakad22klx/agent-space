@@ -7,8 +7,7 @@ import (
 	providers "justsay-harness/providers"
 )
 
-// RunStatus is where a run stands. A string, so a key read straight out of
-// Redis says what it means.
+// RunStatus is where a run stands, stored as a readable string.
 type RunStatus string
 
 const (
@@ -18,8 +17,8 @@ const (
 	StatusFailed          RunStatus = "failed"           // stopped on an error
 )
 
-// AgentState is everything a paused run needs to be resumed by another
-// process. It is stored as JSON, so the tags are the wire format.
+// AgentState is everything a paused run needs to resume. Shared storage also
+// lets another process resume it. JSON tags define the stored format.
 type AgentState struct {
 	SessionID string `json:"session_id"`
 
