@@ -8,6 +8,7 @@ code changes are welcome.
 Follow the [README setup steps](README.md#run-the-project) to clone the project,
 -install the Go version in `go.mod`, and configure a local `.env` file. 
 - Install `golangci-lint` to run the lint check. 
+
 Create a branch for your change:
 
 ```bash
