@@ -106,3 +106,8 @@ terminals use a compact layout, and `NO_COLOR` disables panel colors.
 Use `/verify telegram` to pair a Telegram bot or `/verify gmail` to authorize
 Gmail sending. See [INTEGRATIONS.md](integrations/INTEGRATIONS.md) for setup
 steps and integration details.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development and pull request
+guidelines.
