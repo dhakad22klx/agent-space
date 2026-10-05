@@ -18,13 +18,15 @@ import (
 
 const FileName = "config.yml"
 
+const providerSection = "model_provider"
+
 var ErrInvalidBackend = errors.New("invalid state backend")
 
 // Path uses the same compiled directory as the credentials store.
 func Path() string { return filepath.Join(internal.ConfigDir, FileName) }
 
 var fields = []struct{ key, section, name string }{
-	{"GEMINI_MODEL", "gemini", "model"},
+	{"GEMINI_MODEL", providerSection, "model"},
 	{"HITL_ENABLED", "hitl", "enabled"},
 	{"MOCK_AGENT_CALL", "agent", "mock_calls"},
 	{"HITL_STATE_STORE", "state", "backend"},
@@ -33,6 +35,21 @@ var fields = []struct{ key, section, name string }{
 	{"REDIS_USERNAME", "redis", "username"},
 	{"REDIS_KEY_PREFIX", "redis", "key_prefix"},
 	{"REDIS_DB", "redis", "db"},
+}
+
+var credentialFields = []struct{ section, name, key string }{
+	{providerSection, "api_key", "GEMINI_API_KEY"},
+	{providerSection, "model", "GEMINI_MODEL"},
+	{"redis", "password", "REDIS_PASSWORD"},
+}
+
+func credentialRecord(store *credentials.Store, section string) (map[string]string, error) {
+	var record map[string]string
+	_, err := store.Get(section, &record)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s credentials", section)
+	}
+	return record, nil
 }
 
 func document() (map[string]any, error) {
@@ -70,12 +87,10 @@ func Load() (map[string]string, error) {
 	if err != nil {
 		return nil, errors.New("cannot read credentials.json")
 	}
-	for _, field := range []struct{ section, name, key string }{
-		{"gemini", "api_key", "GEMINI_API_KEY"}, {"redis", "password", "REDIS_PASSWORD"},
-	} {
-		var record map[string]string
-		if _, err := store.Get(field.section, &record); err != nil {
-			return nil, fmt.Errorf("invalid %s credentials", field.section)
+	for _, field := range credentialFields {
+		record, err := credentialRecord(store, field.section)
+		if err != nil {
+			return nil, err
 		}
 		if value, ok := record[field.name]; ok {
 			values[field.key] = value
@@ -201,16 +216,14 @@ func SaveSecrets(values map[string]string) error {
 	if err != nil {
 		return errors.New("cannot read credentials.json")
 	}
-	for _, field := range []struct{ section, name, key string }{
-		{"gemini", "api_key", "GEMINI_API_KEY"}, {"redis", "password", "REDIS_PASSWORD"},
-	} {
+	for _, field := range credentialFields {
 		value, ok := values[field.key]
 		if !ok {
 			continue
 		}
-		var record map[string]string
-		if _, err := store.Get(field.section, &record); err != nil {
-			return fmt.Errorf("invalid %s credentials", field.section)
+		record, err := credentialRecord(store, field.section)
+		if err != nil {
+			return err
 		}
 		if record == nil {
 			record = map[string]string{}

@@ -75,6 +75,10 @@ func TestSetupUsesConfigAndCredentialFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	var record map[string]string
+	if found, err := store.Get("model_provider", &record); !found || err != nil || record["api_key"] != "api-secret" || record["model"] != "gemini-3.5-flash-lite" {
+		t.Fatal("provider API key and model were not saved under model_provider")
+	}
+	record = nil
 	if found, err := store.Get("telegram", &record); !found || err != nil || record["bot_token"] != "existing-token" {
 		t.Fatal("existing integration credentials changed")
 	}
@@ -87,7 +91,7 @@ func TestSetupUsesConfigAndCredentialFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	values, err = config.Runtime()
-	if err != nil || values["GEMINI_API_KEY"] != "api-secret" || values["REDIS_PASSWORD"] != "url-secret" {
+	if err != nil || values["GEMINI_API_KEY"] != "api-secret" || values["GEMINI_MODEL"] != "gemini-3.5-flash-lite" || values["REDIS_PASSWORD"] != "url-secret" {
 		t.Fatal("defaults not preserved")
 	}
 	if !in.secrets[0] || !in.secrets[4] || !in.secrets[6] {
