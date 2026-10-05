@@ -26,7 +26,7 @@ var ErrInvalidBackend = errors.New("invalid state backend")
 func Path() string { return filepath.Join(internal.ConfigDir, FileName) }
 
 var fields = []struct{ key, section, name string }{
-	{"GEMINI_MODEL", providerSection, "model"},
+	{"MODEL_PROVIDER", providerSection, "name"},
 	{"HITL_ENABLED", "hitl", "enabled"},
 	{"MOCK_AGENT_CALL", "agent", "mock_calls"},
 	{"HITL_STATE_STORE", "state", "backend"},
@@ -99,8 +99,8 @@ func Load() (map[string]string, error) {
 	return values, nil
 }
 
-// Runtime retains local .env compatibility until setup has saved Gemini
-// settings. Setup itself exclusively uses config.yml and credentials.json.
+// Runtime retains local .env compatibility for agent settings until setup.
+// The model and API key are read exclusively from credentials.json.
 func Runtime() (map[string]string, error) {
 	values, err := Load()
 	if err != nil {
@@ -116,6 +116,8 @@ func Runtime() (map[string]string, error) {
 	if legacy == nil {
 		legacy = map[string]string{}
 	}
+	delete(legacy, "GEMINI_MODEL")
+	delete(legacy, "GEMINI_API_KEY")
 	switch strings.ToLower(strings.TrimSpace(legacy["HITL_STATE_STORE"])) {
 	case "", "inmemory", "redis":
 	default:
@@ -133,6 +135,10 @@ func SaveSettings(values map[string]string) error {
 	doc, err := document()
 	if err != nil {
 		return err
+	}
+	if provider, ok := doc[providerSection].(map[string]any); ok {
+		delete(provider, "model")
+		delete(provider, "api_key")
 	}
 	for _, field := range fields {
 		value, ok := values[field.key]

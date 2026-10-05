@@ -37,6 +37,7 @@ func runSetup(in lineReader, out io.Writer) error {
 	if strings.TrimSpace(env["GEMINI_API_KEY"]) == "" {
 		return errors.New("GEMINI_API_KEY is required; run justsay setup again")
 	}
+	env["MODEL_PROVIDER"] = "gemini"
 	enabled, _ := strconv.ParseBool(env["HITL_ENABLED"])
 	defaultAnswer := "y/N"
 	if enabled {

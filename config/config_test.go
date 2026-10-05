@@ -34,7 +34,7 @@ func TestLoadIgnoresPreviousProviderSections(t *testing.T) {
 
 func TestModelProviderSettings(t *testing.T) {
 	t.Chdir(t.TempDir())
-	if err := os.WriteFile(Path(), []byte("model_provider:\n  model: yaml-model\ncustom: preserved\n"), 0o600); err != nil {
+	if err := os.WriteFile(Path(), []byte("model_provider:\n  name: gemini\n  model: yaml-model\n  api_key: yaml-key\ncustom: preserved\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	store, err := credentials.Open("")
@@ -51,7 +51,7 @@ func TestModelProviderSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	values, err := Load()
-	if err != nil || values["GEMINI_MODEL"] != "saved-model" || values["GEMINI_API_KEY"] != "saved-key" {
+	if err != nil || values["MODEL_PROVIDER"] != "gemini" || values["GEMINI_MODEL"] != "saved-model" || values["GEMINI_API_KEY"] != "saved-key" {
 		t.Fatal("provider values were not loaded from credentials")
 	}
 	values["GEMINI_MODEL"] = "selected-model"
@@ -60,7 +60,7 @@ func TestModelProviderSettings(t *testing.T) {
 	}
 	values, err = Runtime()
 	if err != nil || values["GEMINI_MODEL"] != "selected-model" {
-		t.Fatal("credential model did not override YAML model")
+		t.Fatal("model was not loaded from credentials")
 	}
 	if err := SaveSettings(values); err != nil {
 		t.Fatal(err)
@@ -79,5 +79,30 @@ func TestModelProviderSettings(t *testing.T) {
 	yaml, err := os.ReadFile(Path())
 	if err != nil || !strings.Contains(string(yaml), "model_provider:") || !strings.Contains(string(yaml), "custom: preserved") {
 		t.Fatal("YAML provider settings were not saved")
+	}
+	if !strings.Contains(string(yaml), "name: gemini") || strings.Contains(string(yaml), "model:") || strings.Contains(string(yaml), "api_key:") {
+		t.Fatal("YAML must contain the provider name without the model or API key")
+	}
+}
+
+func TestProviderCredentialsHaveNoFallback(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile(Path(), []byte("model_provider:\n  name: gemini\n  model: yaml-model\n  api_key: yaml-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(".env", []byte("GEMINI_MODEL=env-model\nGEMINI_API_KEY=env-key\nMOCK_AGENT_CALL=true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, load := range []func() (map[string]string, error){Load, Runtime} {
+		values, err := load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if values["GEMINI_MODEL"] != "" || values["GEMINI_API_KEY"] != "" {
+			t.Fatal("provider credentials were read outside credentials.json")
+		}
+		if values["MODEL_PROVIDER"] != "gemini" {
+			t.Fatal("provider name was not read from config.yml")
+		}
 	}
 }

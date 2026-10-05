@@ -67,6 +67,9 @@ func TestSetupUsesConfigAndCredentialFiles(t *testing.T) {
 	if strings.Contains(string(yaml), "api-secret") || strings.Contains(string(yaml), "url-secret") {
 		t.Fatal("secrets stored in config.yml")
 	}
+	if !strings.Contains(string(yaml), "name: gemini") || strings.Contains(string(yaml), "gemini-3.5-flash-lite") {
+		t.Fatal("config.yml must contain the provider name without the model")
+	}
 	if !strings.Contains(string(yaml), "untouched: keep") {
 		t.Fatal("unrelated config fields changed")
 	}
