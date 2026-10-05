@@ -2,7 +2,20 @@
 
 Agentic System, written in Go.
 
-## Run the project
+## Install
+
+Install the latest published release with Go available:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dhakad22klx/justsay/main/install.sh | sh
+justsay
+```
+
+If the installer prints a PATH command, run it in your current shell or open a
+new terminal before starting `justsay`. See [INSTALL.md](INSTALL.md) for supported
+platforms, Gemini configuration, verification, updates, and removal.
+
+## Run from source
 
 1. Clone the repository and change into its directory:
 
