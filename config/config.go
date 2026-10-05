@@ -99,14 +99,14 @@ func Load() (map[string]string, error) {
 	return values, nil
 }
 
-// Runtime retains local .env compatibility for agent settings until setup.
-// The model and API key are read exclusively from credentials.json.
+// Runtime prefers saved settings and credentials, falling back to local .env
+// when the model or API key has not been configured.
 func Runtime() (map[string]string, error) {
 	values, err := Load()
 	if err != nil {
 		return nil, err
 	}
-	if values["GEMINI_MODEL"] != "" && values["GEMINI_API_KEY"] != "" {
+	if strings.TrimSpace(values["GEMINI_MODEL"]) != "" && strings.TrimSpace(values["GEMINI_API_KEY"]) != "" {
 		return values, nil
 	}
 	legacy, err := godotenv.Read(".env")
@@ -116,14 +116,15 @@ func Runtime() (map[string]string, error) {
 	if legacy == nil {
 		legacy = map[string]string{}
 	}
-	delete(legacy, "GEMINI_MODEL")
-	delete(legacy, "GEMINI_API_KEY")
 	switch strings.ToLower(strings.TrimSpace(legacy["HITL_STATE_STORE"])) {
 	case "", "inmemory", "redis":
 	default:
 		return nil, fmt.Errorf("HITL_STATE_STORE: %w", ErrInvalidBackend)
 	}
 	for key, value := range values {
+		if (key == "GEMINI_MODEL" || key == "GEMINI_API_KEY") && strings.TrimSpace(value) == "" {
+			continue
+		}
 		legacy[key] = value
 	}
 	return legacy, nil

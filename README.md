@@ -98,8 +98,9 @@ details.
 Both files use the single `internal.ConfigDir` constant in `internal/config.go`,
 currently `.` for local development. The production path will be configured
 there when releases are added; no environment variable or bundled `.env` is needed.
-Setup does not read, write, or move `.env`. The model and API key are read only
-from `credentials.json`; other agent settings retain their runtime `.env`
+Setup does not read, write, or move `.env`. Runtime prefers the model and API key
+in `credentials.json`, falling back to `.env` for either missing value. The model
+is never read from `config.yml`. Other agent settings retain their runtime `.env`
 fallback until setup values are saved.
 
 `justsay version` and `justsay update` are skeleton commands that return dummy

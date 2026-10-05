@@ -85,24 +85,49 @@ func TestModelProviderSettings(t *testing.T) {
 	}
 }
 
-func TestProviderCredentialsHaveNoFallback(t *testing.T) {
-	t.Chdir(t.TempDir())
-	if err := os.WriteFile(Path(), []byte("model_provider:\n  name: gemini\n  model: yaml-model\n  api_key: yaml-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(".env", []byte("GEMINI_MODEL=env-model\nGEMINI_API_KEY=env-key\nMOCK_AGENT_CALL=true\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, load := range []func() (map[string]string, error){Load, Runtime} {
-		values, err := load()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if values["GEMINI_MODEL"] != "" || values["GEMINI_API_KEY"] != "" {
-			t.Fatal("provider credentials were read outside credentials.json")
-		}
-		if values["MODEL_PROVIDER"] != "gemini" {
-			t.Fatal("provider name was not read from config.yml")
-		}
+func TestProviderCredentialsEnvFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name, savedKey, savedModel, wantKey, wantModel string
+	}{
+		{"no credentials file", "", "", "env-key", "env-model"},
+		{"missing API key", "", "saved-model", "env-key", "saved-model"},
+		{"missing model", "saved-key", "", "saved-key", "env-model"},
+		{"blank values", " ", " ", "env-key", "env-model"},
+		{"saved credentials preferred", "saved-key", "saved-model", "saved-key", "saved-model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			if err := os.WriteFile(Path(), []byte("model_provider:\n  name: gemini\n  model: yaml-model\n  api_key: yaml-key\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(".env", []byte("GEMINI_MODEL=env-model\nGEMINI_API_KEY=env-key\nMOCK_AGENT_CALL=true\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if tc.savedKey != "" || tc.savedModel != "" {
+				if err := SaveSecrets(map[string]string{"GEMINI_API_KEY": tc.savedKey, "GEMINI_MODEL": tc.savedModel}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			values, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if values["GEMINI_MODEL"] != tc.savedModel || values["GEMINI_API_KEY"] != tc.savedKey {
+				t.Fatal("setup loaded provider credentials outside credentials.json")
+			}
+			values, err = Runtime()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if values["GEMINI_MODEL"] != tc.wantModel || values["GEMINI_API_KEY"] != tc.wantKey {
+				t.Fatal("runtime did not use saved credentials with .env fallback")
+			}
+			if values["MODEL_PROVIDER"] != "gemini" {
+				t.Fatal("provider name was not read from config.yml")
+			}
+			if (tc.wantKey == "env-key" || tc.wantModel == "env-model") && values["MOCK_AGENT_CALL"] != "true" {
+				t.Fatal("runtime did not load other .env settings")
+			}
+		})
 	}
 }
