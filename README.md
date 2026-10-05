@@ -48,7 +48,7 @@ Agentic System, written in Go.
 
 ## Agent state storage
 
-Select a backend in `justsay-config.yml` in the repository root. The bundled
+Select a backend in `config.yml` in the repository root. The bundled
 file selects `inmemory`:
 
 ```yaml
@@ -84,6 +84,18 @@ the expiry; `HITL_STATE_TTL="0"` disables it. In-memory entries expire on read
 and are also cleaned up periodically during writes.
 
 ## CLI commands
+
+Process commands work with `go run . setup`, `go run . --help`, or the equivalent
+installed `justsay` commands. Setup saves agent settings in `config.yml` and
+secrets in the existing `credentials.json`, preserving integration credentials.
+Both files use the single `internal.ConfigDir` constant in `internal/config.go`,
+currently `.` for local development. The production path will be configured
+there when releases are added; no environment variable or bundled `.env` is needed.
+Setup does not read, write, or move `.env`; existing source configurations retain
+their runtime fallback until setup values are saved.
+
+`justsay version` and `justsay update` are skeleton commands that return dummy
+output; version tracking and binary updates will be implemented later.
 
 On startup, the terminal shows a panel with the selected model and saved
 integration status: Gmail authorization, Telegram pairing, and GitHub setup

@@ -17,11 +17,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"justsay-harness/internal"
 )
 
-// DefaultPath is where the file lives, relative to where the agent was started,
-// alongside the session transcripts it is already writing.
-const DefaultPath = "credentials.json"
+// DefaultPath selects credentials.json in the shared internal.ConfigDir.
+const DefaultPath = ""
+
+func Path() string { return filepath.Join(internal.ConfigDir, "credentials.json") }
 
 // fileMode keeps the file readable by its owner alone. It is enforced on every
 // save rather than only at creation, so a file that was loosened by hand
@@ -45,7 +48,7 @@ type Store struct {
 // throw away credentials the user still has.
 func Open(path string) (*Store, error) {
 	if path == "" {
-		path = DefaultPath
+		path = Path()
 	}
 
 	store := &Store{path: path, doc: map[string]json.RawMessage{}}
@@ -65,7 +68,10 @@ func Open(path string) (*Store, error) {
 	}
 
 	if err := json.Unmarshal(raw, &store.doc); err != nil {
-		return nil, fmt.Errorf("cannot parse %s: %w", path, err)
+		return nil, fmt.Errorf("cannot parse %s: invalid credentials JSON", path)
+	}
+	if store.doc == nil {
+		store.doc = map[string]json.RawMessage{}
 	}
 
 	return store, nil
@@ -85,7 +91,7 @@ func (s *Store) Get(name string, into any) (bool, error) {
 	}
 
 	if err := json.Unmarshal(raw, into); err != nil {
-		return false, fmt.Errorf("cannot read the %s entry in %s: %w", name, s.path, err)
+		return false, fmt.Errorf("cannot read the %s entry in %s: invalid credentials", name, s.path)
 	}
 
 	return true, nil

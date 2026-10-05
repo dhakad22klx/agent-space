@@ -3,10 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
-	tui "justsay-harness/cli/tui"
 	"strings"
 
-	"github.com/joho/godotenv"
+	tui "justsay-harness/cli/tui"
+	"justsay-harness/config"
 )
 
 // commandPrefix marks a line as an instruction to the CLI rather than a question
@@ -161,16 +161,16 @@ func (c *commands) stop() {
 }
 
 func setMock(out *tui.Output, mocked bool) {
-	env, err := godotenv.Read(envPath)
+	env, err := config.Runtime()
 	if err != nil {
-		out.Errorf("cannot read %s: %v", envPath, err)
+		out.Errorf("cannot read agent settings: %v", err)
 		return
 	}
 
 	env[mockEnvKey] = fmt.Sprintf("%t", mocked)
 
-	if err := godotenv.Write(env, envPath); err != nil {
-		out.Errorf("cannot write %s: %v", envPath, err)
+	if err := config.SaveSettings(env); err != nil {
+		out.Errorf("cannot save agent settings: %v", err)
 		return
 	}
 

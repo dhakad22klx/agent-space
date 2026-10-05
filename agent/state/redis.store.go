@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"justsay-harness/config"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -37,7 +37,7 @@ var _ Store = (*RedisStore)(nil)
 // as a failed save halfway through a run, which is the worst moment to discover
 // the state store was never reachable.
 func OpenRedis(ctx context.Context) (*RedisStore, error) {
-	env, err := godotenv.Read(".env")
+	env, err := config.Runtime()
 	if err != nil {
 		return nil, fmt.Errorf("read .env: %w", err)
 	}
@@ -61,15 +61,33 @@ func openRedis(ctx context.Context, env map[string]string) (*RedisStore, error) 
 		prefix = DefaultKeyPrefix
 	}
 
-	client := redis.NewClient(&redis.Options{
+	options := &redis.Options{
 		Addr:     addr,
+		Username: env["REDIS_USERNAME"],
 		Password: env["REDIS_PASSWORD"],
 		DB:       parseDB(env["REDIS_DB"]),
-	})
+	}
+	if strings.Contains(addr, "://") {
+		parsed, err := redis.ParseURL(addr)
+		if err != nil {
+			return nil, errors.New("invalid Redis URL; run justsay setup")
+		}
+		options = parsed
+		if env["REDIS_USERNAME"] != "" {
+			options.Username = env["REDIS_USERNAME"]
+		}
+		if env["REDIS_PASSWORD"] != "" {
+			options.Password = env["REDIS_PASSWORD"]
+		}
+		if db, err := strconv.Atoi(env["REDIS_DB"]); err == nil {
+			options.DB = db
+		}
+	}
+	client := redis.NewClient(options)
 
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close() // Preserve the connection failure, not pool cleanup errors.
-		return nil, fmt.Errorf("cannot reach redis at %s: %w", addr, err)
+		return nil, errors.New("cannot reach Redis; check the saved address and credentials")
 	}
 
 	return &RedisStore{client: client, prefix: prefix, ttl: ttl}, nil
