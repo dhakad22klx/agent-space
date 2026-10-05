@@ -88,6 +88,9 @@ and are also cleaned up periodically during writes.
 Process commands work with `go run . setup`, `go run . --help`, or the equivalent
 installed `justsay` commands. Setup saves agent settings in `config.yml` and
 secrets in the existing `credentials.json`, preserving integration credentials.
+When HITL is enabled, setup asks for `inmemory` or `redis` (default `inmemory`,
+or the saved backend on reconfiguration). Only `redis` prompts for connection
+details.
 Both files use the single `internal.ConfigDir` constant in `internal/config.go`,
 currently `.` for local development. The production path will be configured
 there when releases are added; no environment variable or bundled `.env` is needed.

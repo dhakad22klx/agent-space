@@ -57,6 +57,15 @@ func runSetup(in lineReader, out io.Writer) error {
 	}
 	env["HITL_ENABLED"] = strconv.FormatBool(enabled)
 	if enabled {
+		if err := setupField(in, env, "HITL_STATE_STORE", "State backend (inmemory/redis)", "inmemory", false); err != nil {
+			return err
+		}
+		env["HITL_STATE_STORE"] = strings.ToLower(strings.TrimSpace(env["HITL_STATE_STORE"]))
+		if env["HITL_STATE_STORE"] != "inmemory" && env["HITL_STATE_STORE"] != "redis" {
+			return errors.New("state backend must be inmemory or redis; configuration was not saved")
+		}
+	}
+	if enabled && env["HITL_STATE_STORE"] == "redis" {
 		_, _ = fmt.Fprintln(out, "Configure Redis to persist paused state.")
 		if err := setupField(in, env, "REDIS_ADDR", "Redis database URL (host:port or redis[s]:// URL)", "", true); err != nil {
 			return err
@@ -80,7 +89,6 @@ func runSetup(in lineReader, out io.Writer) error {
 				return err
 			}
 		}
-		env["HITL_STATE_STORE"] = "redis"
 		if u, err := url.Parse(env["REDIS_ADDR"]); err == nil && u.User != nil {
 			if password, ok := u.User.Password(); ok && env["REDIS_PASSWORD"] == "" {
 				env["REDIS_PASSWORD"] = password

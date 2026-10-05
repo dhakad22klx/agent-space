@@ -48,7 +48,7 @@ func TestSetupUsesConfigAndCredentialFiles(t *testing.T) {
 	if err := os.WriteFile(config.Path(), []byte("state:\n  backend: inmemory\ncustom:\n  untouched: keep\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	in := &setupInput{answers: []string{"api-secret", "", "yes", "redis://alice:url-secret@localhost:6379/2", "", "", ""}}
+	in := &setupInput{answers: []string{"api-secret", "", "yes", "redis", "redis://alice:url-secret@localhost:6379/2", "", "", ""}}
 	var out bytes.Buffer
 	if err := runSetup(in, &out); err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestSetupUsesConfigAndCredentialFiles(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatal("credential permissions incorrect")
 	}
-	in = &setupInput{answers: make([]string, 7)}
+	in = &setupInput{answers: make([]string, 8)}
 	if err := runSetup(in, &out); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestSetupUsesConfigAndCredentialFiles(t *testing.T) {
 	if err != nil || values["GEMINI_API_KEY"] != "api-secret" || values["REDIS_PASSWORD"] != "url-secret" {
 		t.Fatal("defaults not preserved")
 	}
-	if !in.secrets[0] || !in.secrets[3] || !in.secrets[5] {
+	if !in.secrets[0] || !in.secrets[4] || !in.secrets[6] {
 		t.Fatal("sensitive fields are not masked")
 	}
 	for _, secret := range []string{"api-secret", "url-secret", "existing-token", "legacy-secret"} {
@@ -105,7 +105,7 @@ func TestSetupUsesConfigAndCredentialFiles(t *testing.T) {
 }
 
 func TestSetupRejectsInvalidOrCancelledInput(t *testing.T) {
-	for _, answers := range [][]string{{"", ""}, {"secret"}, {"secret", "", "maybe"}, {"secret", "", "yes", "https://secret@host"}} {
+	for _, answers := range [][]string{{"", ""}, {"secret"}, {"secret", "", "maybe"}, {"secret", "", "yes", "sqlite"}, {"secret", "", "yes", "redis", "https://secret@host"}} {
 		t.Chdir(t.TempDir())
 		var out bytes.Buffer
 		err := runSetup(&setupInput{answers: answers}, &out)
@@ -120,5 +120,60 @@ func TestSetupRejectsInvalidOrCancelledInput(t *testing.T) {
 				t.Fatalf("failed setup wrote %s", path)
 			}
 		}
+	}
+}
+
+func TestSetupStateBackendSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name, hitl, choice, backend string
+		redis                       bool
+	}{
+		{"HITL disabled", "no", "", "inmemory", false},
+		{"default memory", "yes", "", "inmemory", false},
+		{"explicit memory", "yes", "inmemory", "inmemory", false},
+		{"Redis", "yes", "redis", "redis", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			answers := []string{"api-key", "", tc.hitl}
+			if tc.hitl == "yes" {
+				answers = append(answers, tc.choice)
+			}
+			if tc.redis {
+				answers = append(answers, "localhost:6379", "", "redis-password", "")
+			}
+			in := &setupInput{answers: answers}
+			if err := runSetup(in, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			values, err := config.Load()
+			if err != nil || values["HITL_STATE_STORE"] != tc.backend {
+				t.Fatal("incorrect saved backend")
+			}
+			askedRedis := false
+			for _, prompt := range in.prompts {
+				askedRedis = askedRedis || strings.HasPrefix(prompt, "Redis ")
+			}
+			if askedRedis != tc.redis || len(in.answers) != 0 {
+				t.Fatal("incorrect setup prompts")
+			}
+			// Re-running setup keeps the selected backend when Enter is pressed.
+			if err := runSetup(&setupInput{answers: make([]string, len(answers))}, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			values, err = config.Load()
+			if err != nil || values["HITL_STATE_STORE"] != tc.backend {
+				t.Fatal("saved backend default changed")
+			}
+			if tc.redis {
+				if err := runSetup(&setupInput{answers: []string{"", "", "", "inmemory"}}, io.Discard); err != nil {
+					t.Fatal(err)
+				}
+				values, err = config.Load()
+				if err != nil || values["HITL_STATE_STORE"] != "inmemory" || values["REDIS_PASSWORD"] != "redis-password" {
+					t.Fatal("switching backend lost saved Redis credentials")
+				}
+			}
+		})
 	}
 }

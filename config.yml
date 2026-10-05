@@ -1,2 +1,11 @@
+agent:
+    mock_calls: false
+gemini:
+    model: ahga
+hitl:
+    enabled: true
+    require_approval:
+        - gmail_send
+        - send_updates_to_manager
 state:
-  backend: inmemory
+    backend: inmemory
