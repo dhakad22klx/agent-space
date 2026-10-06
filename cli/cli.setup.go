@@ -109,7 +109,15 @@ func runSetup(in lineReader, out io.Writer) error {
 	if err := config.SaveSettings(env); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(out, "JustSay setup completed. Settings: %s; credentials: %s\nRun: justsay\nOptional integrations: /verify gmail and /verify telegram inside the agent.\n", config.Path(), credentials.Path())
+	settingsPath, err := config.Path()
+	if err != nil {
+		return err
+	}
+	credentialsPath, err := credentials.Path()
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "JustSay setup completed. Settings: %s; credentials: %s\nRun: justsay\nOptional integrations: /verify gmail and /verify telegram inside the agent.\n", settingsPath, credentialsPath)
 	return err
 }
 

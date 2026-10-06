@@ -22,8 +22,8 @@ const providerSection = "model_provider"
 
 var ErrInvalidBackend = errors.New("invalid state backend")
 
-// Path uses the same compiled directory as the credentials store.
-func Path() string { return filepath.Join(internal.ConfigDir, FileName) }
+// Path uses the same resolved directory as the credentials store.
+func Path() (string, error) { return internal.ConfigPath(FileName) }
 
 var fields = []struct{ key, section, name string }{
 	{"MODEL_PROVIDER", providerSection, "name"},
@@ -54,15 +54,19 @@ func credentialRecord(store *credentials.Store, section string) (map[string]stri
 
 func document() (map[string]any, error) {
 	doc := map[string]any{}
-	data, err := os.ReadFile(Path())
+	path, err := Path()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return doc, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", Path(), err)
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("parse %s: invalid YAML", Path())
+		return nil, fmt.Errorf("parse %s: invalid YAML", path)
 	}
 	if doc == nil {
 		doc = map[string]any{}
@@ -133,6 +137,10 @@ func Runtime() (map[string]string, error) {
 // SaveSettings preserves unknown YAML fields. Secrets are saved separately
 // through the existing atomic credentials store.
 func SaveSettings(values map[string]string) error {
+	path, err := Path()
+	if err != nil {
+		return err
+	}
 	doc, err := document()
 	if err != nil {
 		return err
@@ -170,7 +178,7 @@ func SaveSettings(values map[string]string) error {
 	if err != nil {
 		return errors.New("cannot encode agent settings")
 	}
-	dir := filepath.Dir(Path())
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -188,7 +196,7 @@ func SaveSettings(values map[string]string) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), Path())
+	return os.Rename(f.Name(), path)
 }
 
 // ApprovalTools lets installed agents use the policy in config.yml while

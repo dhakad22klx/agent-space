@@ -48,6 +48,9 @@ func writeEnv(t *testing.T, contents string) {
 	t.Helper()
 
 	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(contents), 0o600); err != nil {
 		t.Fatalf("cannot write .env: %v", err)
 	}

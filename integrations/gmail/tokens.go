@@ -68,7 +68,11 @@ func (t *Tool) now() time.Time {
 func (t *Tool) accessToken(ctx context.Context, cfg OAuthConfig, rejectedToken string) (Record, error) {
 	path := t.CredentialsPath
 	if path == "" {
-		path = credentials.Path()
+		var err error
+		path, err = credentials.Path()
+		if err != nil {
+			return Record{}, err
+		}
 	}
 	path, err := filepath.Abs(path)
 	if err != nil {

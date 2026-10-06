@@ -2,15 +2,32 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"justsay-harness/credentials"
 )
 
-func TestLoadIgnoresPreviousProviderSections(t *testing.T) {
+func configWorkspace(t *testing.T) string {
+	t.Helper()
 	t.Chdir(t.TempDir())
-	if err := os.WriteFile(Path(), []byte("gemini:\n  model: previous-model\n"), 0o600); err != nil {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path, err := Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLoadIgnoresPreviousProviderSections(t *testing.T) {
+	path := configWorkspace(t)
+	if err := os.WriteFile(path, []byte("gemini:\n  model: previous-model\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	store, err := credentials.Open("")
@@ -33,8 +50,8 @@ func TestLoadIgnoresPreviousProviderSections(t *testing.T) {
 }
 
 func TestModelProviderSettings(t *testing.T) {
-	t.Chdir(t.TempDir())
-	if err := os.WriteFile(Path(), []byte("model_provider:\n  name: gemini\n  model: yaml-model\n  api_key: yaml-key\ncustom: preserved\n"), 0o600); err != nil {
+	path := configWorkspace(t)
+	if err := os.WriteFile(path, []byte("model_provider:\n  name: gemini\n  model: yaml-model\n  api_key: yaml-key\ncustom: preserved\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	store, err := credentials.Open("")
@@ -76,7 +93,7 @@ func TestModelProviderSettings(t *testing.T) {
 	if found, err := store.Get("telegram", &record); !found || err != nil || record["token"] != "saved-token" {
 		t.Fatal("unrelated credentials changed")
 	}
-	yaml, err := os.ReadFile(Path())
+	yaml, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(yaml), "model_provider:") || !strings.Contains(string(yaml), "custom: preserved") {
 		t.Fatal("YAML provider settings were not saved")
 	}
@@ -96,8 +113,8 @@ func TestProviderCredentialsEnvFallback(t *testing.T) {
 		{"saved credentials preferred", "saved-key", "saved-model", "saved-key", "saved-model"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Chdir(t.TempDir())
-			if err := os.WriteFile(Path(), []byte("model_provider:\n  name: gemini\n  model: yaml-model\n  api_key: yaml-key\n"), 0o600); err != nil {
+			path := configWorkspace(t)
+			if err := os.WriteFile(path, []byte("model_provider:\n  name: gemini\n  model: yaml-model\n  api_key: yaml-key\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(".env", []byte("GEMINI_MODEL=env-model\nGEMINI_API_KEY=env-key\nMOCK_AGENT_CALL=true\n"), 0o600); err != nil {

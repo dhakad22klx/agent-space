@@ -11,6 +11,23 @@ import (
 	"justsay-harness/credentials"
 )
 
+func setupWorkspace(t *testing.T) (string, string) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	settingsPath, err := config.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentialsPath, err := credentials.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return settingsPath, credentialsPath
+}
+
 type setupInput struct {
 	answers []string
 	prompts []string
@@ -29,7 +46,7 @@ func (in *setupInput) read(prompt string, secret bool) (string, error) {
 }
 
 func TestSetupUsesConfigAndCredentialFiles(t *testing.T) {
-	t.Chdir(t.TempDir())
+	settingsPath, credentialsPath := setupWorkspace(t)
 	// Setup must never read or rewrite .env, even when it is malformed.
 	legacy := []byte("legacy-secret invalid syntax")
 	if err := os.WriteFile(".env", legacy, 0o600); err != nil {
@@ -45,7 +62,7 @@ func TestSetupUsesConfigAndCredentialFiles(t *testing.T) {
 	if err := store.Save(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(config.Path(), []byte("state:\n  backend: inmemory\ncustom:\n  untouched: keep\n"), 0o600); err != nil {
+	if err := os.WriteFile(settingsPath, []byte("state:\n  backend: inmemory\ncustom:\n  untouched: keep\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	in := &setupInput{answers: []string{"api-secret", "", "yes", "redis", "redis://alice:url-secret@localhost:6379/2", "", "", ""}}
@@ -60,7 +77,7 @@ func TestSetupUsesConfigAndCredentialFiles(t *testing.T) {
 	if values["GEMINI_API_KEY"] != "api-secret" || values["GEMINI_MODEL"] != "gemini-3.5-flash-lite" || values["REDIS_PASSWORD"] != "url-secret" || values["REDIS_USERNAME"] != "alice" {
 		t.Fatal("saved values incorrect")
 	}
-	yaml, err := os.ReadFile(config.Path())
+	yaml, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +102,7 @@ func TestSetupUsesConfigAndCredentialFiles(t *testing.T) {
 	if found, err := store.Get("telegram", &record); !found || err != nil || record["bot_token"] != "existing-token" {
 		t.Fatal("existing integration credentials changed")
 	}
-	info, err := os.Stat(credentials.Path())
+	info, err := os.Stat(credentialsPath)
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatal("credential permissions incorrect")
 	}
@@ -113,7 +130,7 @@ func TestSetupUsesConfigAndCredentialFiles(t *testing.T) {
 
 func TestSetupRejectsInvalidOrCancelledInput(t *testing.T) {
 	for _, answers := range [][]string{{"", ""}, {"secret"}, {"secret", "", "maybe"}, {"secret", "", "yes", "sqlite"}, {"secret", "", "yes", "redis", "https://secret@host"}} {
-		t.Chdir(t.TempDir())
+		settingsPath, credentialsPath := setupWorkspace(t)
 		var out bytes.Buffer
 		err := runSetup(&setupInput{answers: answers}, &out)
 		if err == nil {
@@ -122,7 +139,7 @@ func TestSetupRejectsInvalidOrCancelledInput(t *testing.T) {
 		if strings.Contains(err.Error()+out.String(), "secret") {
 			t.Fatal("error exposed secret")
 		}
-		for _, path := range []string{config.Path(), credentials.Path()} {
+		for _, path := range []string{settingsPath, credentialsPath} {
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
 				t.Fatalf("failed setup wrote %s", path)
 			}
@@ -141,7 +158,7 @@ func TestSetupStateBackendSelection(t *testing.T) {
 		{"Redis", "yes", "redis", "redis", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Chdir(t.TempDir())
+			setupWorkspace(t)
 			answers := []string{"api-key", "", tc.hitl}
 			if tc.hitl == "yes" {
 				answers = append(answers, tc.choice)

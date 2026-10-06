@@ -24,7 +24,7 @@ import (
 // DefaultPath selects credentials.json in the shared internal.ConfigDir.
 const DefaultPath = ""
 
-func Path() string { return filepath.Join(internal.ConfigDir, "credentials.json") }
+func Path() (string, error) { return internal.ConfigPath("credentials.json") }
 
 // fileMode keeps the file readable by its owner alone. It is enforced on every
 // save rather than only at creation, so a file that was loosened by hand
@@ -48,7 +48,11 @@ type Store struct {
 // throw away credentials the user still has.
 func Open(path string) (*Store, error) {
 	if path == "" {
-		path = Path()
+		var err error
+		path, err = Path()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	store := &Store{path: path, doc: map[string]json.RawMessage{}}
@@ -125,7 +129,7 @@ func (s *Store) Save() (saveErr error) {
 	encoded = append(encoded, '\n')
 
 	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("cannot create %s: %w", dir, err)
 	}
 
