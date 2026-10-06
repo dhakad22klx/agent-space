@@ -72,6 +72,9 @@ func hitlWorkspace(t *testing.T, env string, config string) {
 	t.Helper()
 
 	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600); err != nil {
 		t.Fatalf("cannot write .env: %v", err)
 	}
@@ -268,6 +271,9 @@ func TestHitlWithoutAConfigGatesNothing(t *testing.T) {
 // and Reload says why, rather than a typo quietly opening the gate.
 func TestHitlWithABrokenConfigGatesEverything(t *testing.T) {
 	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("HITL_ENABLED=\"true\"\n"), 0o600); err != nil {
 		t.Fatalf("cannot write .env: %v", err)
 	}

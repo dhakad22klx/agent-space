@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
+	"justsay-harness/config"
 	tools "justsay-harness/tools"
 
-	"github.com/joho/godotenv"
 	"google.golang.org/genai"
 )
 
@@ -41,19 +41,19 @@ var _ IProvider = (*Gemini)(nil)
 // NewGemini builds a provider from the GEMINI_API_KEY and GEMINI_MODEL
 // entries in .env.
 func NewGemini(ctx context.Context) (*Gemini, error) {
-	env, err := godotenv.Read(".env")
+	env, err := config.Runtime()
 	if err != nil {
-		return nil, fmt.Errorf("read .env: %w", err)
+		return nil, err
 	}
 
 	apiKey := env["GEMINI_API_KEY"]
 	if apiKey == "" {
-		return nil, errors.New("GEMINI_API_KEY is not set in .env")
+		return nil, errors.New("Gemini API key is missing; run justsay setup")
 	}
 
 	model := env["GEMINI_MODEL"]
 	if model == "" {
-		return nil, errors.New("GEMINI_MODEL is not set in .env")
+		return nil, errors.New("Gemini model is missing; run justsay setup")
 	}
 
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{

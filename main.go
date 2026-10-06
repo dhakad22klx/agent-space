@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	cli "justsay-harness/cli"
+	"os"
 )
 
 func main() {
-	cli.StartCli()
+	os.Exit(cli.Run(context.Background(), os.Args[1:]))
 }

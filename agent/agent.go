@@ -9,13 +9,13 @@ import (
 
 	humanintheloop "justsay-harness/agent/human-in-the-loop"
 	state "justsay-harness/agent/state"
+	"justsay-harness/config"
 	credentials "justsay-harness/credentials"
 	gmail "justsay-harness/integrations/gmail"
 	providers "justsay-harness/providers"
 	tools "justsay-harness/tools"
 
 	"github.com/google/uuid"
-	"github.com/joho/godotenv"
 )
 
 // systemPrompt frames the job for the model. It says nothing about individual
@@ -180,9 +180,9 @@ func GetAgent(provider providers.IProvider) *Agent {
 // Run answers one user prompt, running as many tool rounds as the model asks
 // for along the way.
 func (a *Agent) Run(ctx context.Context, prompt string, sessionID string) (string, error) {
-	env, err := godotenv.Read(".env")
+	env, err := config.Runtime()
 	if err != nil {
-		return "", fmt.Errorf("read .env: %w", err)
+		return "", err
 	}
 	mockAgentCall := env["MOCK_AGENT_CALL"]
 	if mockAgentCall == "true" {

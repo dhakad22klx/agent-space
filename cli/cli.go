@@ -22,11 +22,15 @@ import (
 // setup succeeds, out owns application messages while readline owns prompts and
 // the line currently being edited.
 func StartCli() {
-	ctx := context.Background()
+	if err := startCli(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "justsay: %v\n", err)
+	}
+}
+
+func startCli(ctx context.Context) error {
 	in, err := newTerminalInput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error preparing terminal input: %v\n", err)
-		return
+		return fmt.Errorf("prepare terminal input: %w", err)
 	}
 	defer func() {
 		if err := in.close(); err != nil {
@@ -55,6 +59,9 @@ func StartCli() {
 	// provider is kept rather than passed straight through, because Telegram
 	// reaches for the same agent, built on the same provider.
 	provider := newProvider(ctx, out)
+	if provider == nil {
+		return fmt.Errorf("cannot initialize Gemini; run justsay setup")
+	}
 
 	// One agent for the whole process; nil when no model is configured, which
 	// the paths that use it report for themselves.
@@ -96,11 +103,11 @@ func StartCli() {
 		typed, err := in.read("justsay>", false)
 		if err == readline.ErrInterrupt {
 			out.Farewell("Goodbye!")
-			return
+			return nil
 		}
 		if err != nil {
 			if err != io.EOF {
-				out.Errorf("error reading input: %v", err)
+				return fmt.Errorf("read input: %w", err)
 			}
 			break
 		}
@@ -118,7 +125,7 @@ func StartCli() {
 			continue
 		case input == "exit":
 			out.Farewell("Goodbye!")
-			return
+			return nil
 		case input == "help":
 			out.Plain("Available commands: help, reset, exit")
 			cmds.usage()
@@ -136,6 +143,7 @@ func StartCli() {
 			// assistant.Resume(ctx, input) -- to test Resume function by providing session id as input
 		}
 	}
+	return nil
 }
 
 // newSession opens this run's transcript, or nil when it cannot be written: a

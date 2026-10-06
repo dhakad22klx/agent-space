@@ -4,12 +4,22 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	appconfig "justsay-harness/config"
 )
+
+func stateWorkspace(t *testing.T) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
 
 func TestOpenBackend(t *testing.T) {
 	for _, tc := range []struct {
@@ -40,7 +50,11 @@ func TestOpenBackend(t *testing.T) {
 		{name: "negative TTL", env: "HITL_STATE_STORE=inmemory\nHITL_STATE_TTL=-1s", err: "negative"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Chdir(t.TempDir())
+			stateWorkspace(t)
+			configPath, err := appconfig.Path()
+			if err != nil {
+				t.Fatal(err)
+			}
 			env := tc.env
 			if tc.backend == "redis" {
 				server := miniredis.RunT(t)
@@ -52,7 +66,10 @@ func TestOpenBackend(t *testing.T) {
 				}
 			}
 			if tc.yaml != "" {
-				if err := os.WriteFile(ConfigFile, []byte(tc.yaml), 0o600); err != nil {
+				if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(configPath, []byte(tc.yaml), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -67,7 +84,11 @@ func TestOpenBackend(t *testing.T) {
 				return
 			}
 			if tc.err != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.err) {
+				want := tc.err
+				if want == "parse "+ConfigFile {
+					want = "parse " + configPath
+				}
+				if err == nil || !strings.Contains(err.Error(), want) {
 					t.Fatalf("Open error = %v, want %q", err, tc.err)
 				}
 				return
@@ -100,7 +121,7 @@ func TestOpenInMemoryTTL(t *testing.T) {
 		want time.Duration
 	}{{"", DefaultTTL}, {"0", 0}, {"5m", 5 * time.Minute}} {
 		t.Run(tc.raw, func(t *testing.T) {
-			t.Chdir(t.TempDir())
+			stateWorkspace(t)
 			if err := os.WriteFile(".env", []byte("HITL_STATE_STORE=inmemory\nHITL_STATE_TTL="+tc.raw), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -127,7 +148,7 @@ func TestOpenRedisFailureReturnsNilStore(t *testing.T) {
 		{"invalid TTL", "HITL_STATE_STORE=redis\nREDIS_ADDR=unused:6379\nHITL_STATE_TTL=invalid\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Chdir(t.TempDir())
+			stateWorkspace(t)
 			if err := os.WriteFile(".env", []byte(tc.env), 0o600); err != nil {
 				t.Fatal(err)
 			}

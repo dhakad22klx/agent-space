@@ -14,7 +14,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/joho/godotenv"
+	appconfig "justsay-harness/config"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -84,9 +85,24 @@ func current() *policy {
 // still gets the fail-closed one.
 func load() (*policy, error) {
 	// A missing .env is not an error here: no flag means HITL is off.
-	env, _ := godotenv.Read(".env")
+	env, loadErr := appconfig.Runtime()
 	enabled, _ := strconv.ParseBool(strings.TrimSpace(env["HITL_ENABLED"]))
 	p := &policy{enabled: enabled, require: map[string]bool{}}
+	if loadErr != nil {
+		p.enabled, p.gateEverything = true, true
+		return p, loadErr
+	}
+	tools, found, err := appconfig.ApprovalTools()
+	if err != nil {
+		p.gateEverything = true
+		return p, err
+	}
+	if found {
+		for _, tool := range tools {
+			p.require[strings.TrimSpace(tool)] = true
+		}
+		return p, nil
+	}
 
 	data, err := os.ReadFile(ConfigFile)
 	if err != nil {

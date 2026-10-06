@@ -61,7 +61,7 @@ platforms, Gemini configuration, verification, updates, and removal.
 
 ## Agent state storage
 
-Select a backend in `justsay-config.yml` in the repository root. The bundled
+Select a backend in `config.yml` in the repository root. The bundled
 file selects `inmemory`:
 
 ```yaml
@@ -97,6 +97,32 @@ the expiry; `HITL_STATE_TTL="0"` disables it. In-memory entries expire on read
 and are also cleaned up periodically during writes.
 
 ## CLI commands
+
+Process commands work with `go run . setup`, `go run . --help`, or the equivalent
+installed `justsay` commands. Setup saves agent settings in `config.yml` and
+secrets in the existing `credentials.json`, preserving integration credentials.
+Provider settings use the generic `model_provider` entry, with `api_key` and
+`model` saved together in `credentials.json`; `config.yml` stores only
+`model_provider.name` (`gemini`). Previous provider-specific entries
+are not used or migrated.
+When HITL is enabled, setup asks for `inmemory` or `redis` (default `inmemory`,
+or the saved backend on reconfiguration). Only `redis` prompts for connection
+details.
+Both files use the single `internal.ConfigDir` constant in `internal/config.go`.
+The current value `.` uses the working directory for local development. Set it
+to `.justsay` to store both files in the user's `~/.justsay/` directory,
+regardless of where the CLI is launched. Other relative values also resolve
+under the user's home directory; absolute paths are used directly. The directory
+is created on save, and credentials are readable only by their owner. Existing
+project-local files are not moved automatically; run `justsay setup` to configure
+the selected location. Sessions still use the working directory's `sessions/`.
+Setup does not read, write, or move `.env`. Runtime prefers the model and API key
+in `credentials.json`, falling back to `.env` for either missing value. The model
+is never read from `config.yml`. Other agent settings retain their runtime `.env`
+fallback until setup values are saved.
+
+`justsay version` and `justsay update` are skeleton commands that return dummy
+output; version tracking and binary updates will be implemented later.
 
 On startup, the terminal shows a panel with the selected model and saved
 integration status: Gmail authorization, Telegram pairing, and GitHub setup
