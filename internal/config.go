@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-// ConfigDir is the shared directory for config.yml and credentials.json.
+// ConfigDir is the shared directory for config.yml, credentials.json, and sessions.
 // "." uses the working directory for local development. Other relative values,
 // such as ".justsay", are resolved under the user's home directory.
 // Absolute values are used directly.

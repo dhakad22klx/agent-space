@@ -108,14 +108,15 @@ are not used or migrated.
 When HITL is enabled, setup asks for `inmemory` or `redis` (default `inmemory`,
 or the saved backend on reconfiguration). Only `redis` prompts for connection
 details.
-Both files use the single `internal.ConfigDir` constant in `internal/config.go`.
-The current value `.` uses the working directory for local development. Set it
-to `.justsay` to store both files in the user's `~/.justsay/` directory,
-regardless of where the CLI is launched. Other relative values also resolve
-under the user's home directory; absolute paths are used directly. The directory
-is created on save, and credentials are readable only by their owner. Existing
-project-local files are not moved automatically; run `justsay setup` to configure
-the selected location. Sessions still use the working directory's `sessions/`.
+Both files and session transcripts use the single `internal.ConfigDir` constant
+in `internal/config.go`. The current value `.justsay` stores them in the user's
+`~/.justsay/` directory, with transcripts in `~/.justsay/sessions/`, regardless of
+where the CLI is launched. Other relative values also resolve under the user's
+home directory; absolute paths are used directly. The value `.` uses the working
+directory for local development. The directory is created on save or session
+start, and credentials are readable only by their owner. Existing project-local
+files are not moved automatically; run `justsay setup` to configure the selected
+location.
 Setup does not read, write, or move `.env`. Runtime prefers the model and API key
 in `credentials.json`, falling back to `.env` for either missing value. The model
 is never read from `config.yml`. Other agent settings retain their runtime `.env`

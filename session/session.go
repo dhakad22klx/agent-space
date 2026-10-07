@@ -11,10 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"justsay-harness/internal"
+
 	"github.com/google/uuid"
 )
 
-// DefaultDir is where transcripts land, relative to where the CLI was started.
+// DefaultDir is the transcript subdirectory inside internal.ConfigDir.
 const DefaultDir = "sessions"
 
 // Entry is one line of a transcript. Kind says what the line is; ID appears
@@ -39,10 +41,15 @@ type Session struct {
 }
 
 // Start mints a session id, creates dir if it is missing, and opens
-// dir/<id>.jsonl for the run. An empty dir means DefaultDir.
+// dir/<id>.jsonl for the run. An empty dir resolves DefaultDir inside
+// internal.ConfigDir.
 func Start(dir string) (*Session, error) {
 	if dir == "" {
-		dir = DefaultDir
+		var err error
+		dir, err = internal.ConfigPath(DefaultDir)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	id, err := newID()
