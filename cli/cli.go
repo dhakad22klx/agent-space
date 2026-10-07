@@ -149,7 +149,7 @@ func startCli(ctx context.Context) error {
 // newSession opens this run's transcript, or nil when it cannot be written: a
 // missing log is worth a warning, never a refusal to start.
 func newSession(out *tui.Output) *session.Session {
-	record, err := session.Start(session.DefaultDir)
+	record, err := session.Start("")
 	if err != nil {
 		out.Warn(fmt.Sprintf("not recording this session: %v", err))
 		return nil
