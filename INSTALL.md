@@ -64,19 +64,23 @@ justsay
 `command -v justsay` should print the path to `~/.local/bin/justsay`. Running
 `justsay` with no arguments starts the interactive agent.
 
-Model requests still need your Gemini credentials. In the directory where you
-run `justsay`, create a `.env` file containing:
+Configure your Gemini API key and model with:
 
-```dotenv
-GEMINI_API_KEY="your Gemini API key"
-GEMINI_MODEL="your Gemini model ID"
-MOCK_AGENT_CALL="false"
+```bash
+justsay setup
+justsay
 ```
 
-See [.env.example](.env.example) for optional integrations and state settings.
-The CLI opens without `.env`, but cannot answer prompts until the model is
-configured. Credentials and session transcripts are stored in the working
-directory, as described in [README.md](README.md).
+JustSay stores its settings, credentials, and session transcripts under
+`~/.justsay/`, regardless of where you run it:
+
+- `config.yml` stores agent settings.
+- `credentials.json` stores your API key, model, and integration credentials.
+- `sessions/` stores session transcripts.
+
+No `.env` file is needed for this setup. JustSay does not save anything to `.env`.
+To configure optional integrations, use `/verify gmail` or `/verify telegram`
+inside the agent. See [README.md](README.md) for details.
 
 ## Troubleshooting
 
@@ -108,5 +112,13 @@ rm -f "$HOME/.local/bin/justsay"
 Optionally remove the block between `# >>> JustSay PATH >>>` and
 `# <<< JustSay PATH <<<` from the startup files listed above. For Fish, you can
 remove `justsay.fish`. Keep `~/.local/bin` on PATH if other tools use it.
-Removing the binary leaves your `.env`, `credentials.json`, and `sessions/`
-files in place; remove those separately only if you no longer need them.
+To remove all settings, saved credentials, and session transcripts stored by
+JustSay on this computer, delete the `~/.justsay/` directory:
+
+```bash
+rm -rf "$HOME/.justsay"
+```
+
+This is the `.justsay` folder in your home directory, regardless of where you
+run the removal command. If you configured an external Redis server for agent
+state, remove that state from Redis separately.
