@@ -38,8 +38,8 @@ type Gemini struct {
 
 var _ IProvider = (*Gemini)(nil)
 
-// NewGemini builds a provider from the GEMINI_API_KEY and GEMINI_MODEL
-// entries in .env.
+// NewGemini builds a provider from saved credentials, falling back to .env
+// when the API key or model is missing.
 func NewGemini(ctx context.Context) (*Gemini, error) {
 	env, err := config.Runtime()
 	if err != nil {

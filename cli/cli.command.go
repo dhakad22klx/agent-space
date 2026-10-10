@@ -2,7 +2,7 @@ package cli
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 	"strings"
 
 	tui "justsay-harness/cli/tui"
@@ -169,7 +169,7 @@ func setMock(out *tui.Output, mocked bool) {
 		return
 	}
 
-	env[mockEnvKey] = fmt.Sprintf("%t", mocked)
+	env[mockEnvKey] = strconv.FormatBool(mocked)
 
 	if err := config.SaveSettings(env); err != nil {
 		out.Errorf("cannot save agent settings: %v", err)

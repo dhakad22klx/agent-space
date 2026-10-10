@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+
 	agent "justsay-harness/agent"
 	state "justsay-harness/agent/state"
 	credentials "justsay-harness/credentials"
 	telegram "justsay-harness/integrations/telegram"
 	providers "justsay-harness/providers"
-	"strings"
-	"time"
 )
 
 // notifyTimeout bounds the approval message. It is sent while the agent holds

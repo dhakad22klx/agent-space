@@ -90,7 +90,8 @@ func (s *Store) Path() string { return s.path }
 // something I could not read".
 func (s *Store) Get(name string, into any) (bool, error) {
 	raw, ok := s.doc[name]
-	if !ok || len(bytes.TrimSpace(raw)) == 0 || string(bytes.TrimSpace(raw)) == "null" {
+	trimmed := bytes.TrimSpace(raw)
+	if !ok || len(trimmed) == 0 || string(trimmed) == "null" {
 		return false, nil
 	}
 
