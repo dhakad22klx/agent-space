@@ -55,16 +55,13 @@ func startCli(ctx context.Context) error {
 	// user is shown on the way out.
 	runID := sessionKey(session)
 
-	// The prompt still works without a provider; only answering needs one. The
-	// provider is kept rather than passed straight through, because Telegram
-	// reaches for the same agent, built on the same provider.
+	// Keep the provider so the prompt and Telegram share the same agent.
 	provider := newProvider(ctx, out)
 	if provider == nil {
 		return fmt.Errorf("cannot initialize Gemini; run justsay setup")
 	}
 
-	// One agent for the whole process; nil when no model is configured, which
-	// the paths that use it report for themselves.
+	// One agent serves the whole process.
 	assistant := agent.GetAgent(provider)
 
 	// Attached here and only here. One agent serves both callers, so the trace
@@ -91,11 +88,7 @@ func startCli(ctx context.Context) error {
 	// whatever a command leaves running — a pairing saved by an earlier run
 	// starts polling here, and is stopped on the way out.
 	cmds := newCommands(out, in, session, provider, runID)
-	model := "unavailable"
-	if provider != nil {
-		model = provider.Model()
-	}
-	out.Startup(model, integrationStatuses(credentials.DefaultPath))
+	out.Startup(provider.Model(), integrationStatuses(credentials.DefaultPath))
 	cmds.resume(ctx)
 	defer cmds.stop()
 

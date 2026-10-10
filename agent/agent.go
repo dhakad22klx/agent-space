@@ -184,8 +184,7 @@ func (a *Agent) Run(ctx context.Context, prompt string, sessionID string) (strin
 	if err != nil {
 		return "", err
 	}
-	mockAgentCall := env["MOCK_AGENT_CALL"]
-	if mockAgentCall == "true" {
+	if env["MOCK_AGENT_CALL"] == "true" {
 		return "Agent call is mocked, to turn it on type `/on` and to turn it back off type `/off`.", nil
 	}
 	a.mu.Lock()
@@ -193,7 +192,12 @@ func (a *Agent) Run(ctx context.Context, prompt string, sessionID string) (strin
 
 	a.history = append(a.history, providers.Message{Role: providers.RoleUser, Text: prompt})
 
-	for step := 0; step < a.maxSteps; step++ {
+	return a.runLoop(ctx, sessionID, 0)
+}
+
+// runLoop continues a turn from startStep. The caller must hold mu.
+func (a *Agent) runLoop(ctx context.Context, sessionID string, startStep int) (string, error) {
+	for step := startStep; step < a.maxSteps; step++ {
 		reply, err := a.provider.Chat(ctx, systemPrompt, a.history, a.tools.Schemas())
 		if err != nil {
 			return "", err
@@ -213,7 +217,7 @@ func (a *Agent) Run(ctx context.Context, prompt string, sessionID string) (strin
 			// The first call a human has to sign off on ends the turn. What ran
 			// before it is kept, so an approval arriving later resumes instead
 			// of running those tools a second time.
-			if needHumanApproval(call.Name) {
+			if humanintheloop.RequiresApproval(call.Name) {
 				if err := a.pause(ctx, sessionID, call, results, step); err != nil {
 					return "", err
 				}
@@ -280,50 +284,7 @@ func (a *Agent) ResumeApproval(ctx context.Context, sessionID string, approvalID
 	}
 	a.history = append(a.history, providers.Message{Role: providers.RoleTool, ToolResults: []providers.ToolResult{result}})
 
-	// From here it is the same cycle Run walks, continuing the step budget the
-	// paused run had already spent.
-	for step := saved.Step + 1; step < a.maxSteps; step++ {
-		reply, err := a.provider.Chat(ctx, systemPrompt, a.history, a.tools.Schemas())
-		if err != nil {
-			return "", err
-		}
-
-		a.history = append(a.history, reply)
-
-		if len(reply.ToolCalls) == 0 {
-			// The run is over, so the paused copy of it is not worth keeping.
-			// if err := store.Delete(ctx, sessionID); err != nil {
-			// 	return "", err
-			// }
-
-			return reply.Text, nil
-		}
-
-		results := make([]providers.ToolResult, 0, len(reply.ToolCalls))
-		for _, call := range reply.ToolCalls {
-			if needHumanApproval(call.Name) {
-				if err := a.pause(ctx, sessionID, call, results, step); err != nil {
-					return "", err
-				}
-
-				return pausedForApproval, nil
-			}
-
-			result := a.runTool(ctx, call)
-			if a.OnToolCall != nil {
-				a.OnToolCall(call, result)
-			}
-			results = append(results, result)
-		}
-
-		a.history = append(a.history, providers.Message{Role: providers.RoleTool, ToolResults: results})
-	}
-
-	return "", fmt.Errorf("stopped after %d tool rounds without a final answer", a.maxSteps)
-}
-
-func needHumanApproval(toolName string) bool {
-	return humanintheloop.RequiresApproval(toolName)
+	return a.runLoop(ctx, sessionID, saved.Step+1)
 }
 
 // Decline drops a held call: the decision is recorded and the run stops there.
