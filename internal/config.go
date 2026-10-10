@@ -11,7 +11,7 @@ import (
 // "." uses the working directory for local development. Other relative values,
 // such as ".justsay", are resolved under the user's home directory.
 // Absolute values are used directly.
-const ConfigDir = "justsay"
+const ConfigDir = ".justsay"
 
 func ConfigPath(name string) (string, error) {
 	return configPath(ConfigDir, name)
