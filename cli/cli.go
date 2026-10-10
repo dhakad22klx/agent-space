@@ -123,13 +123,12 @@ func startCli(ctx context.Context) error {
 		switch {
 		case input == "":
 			continue
-		case input == "exit":
+		case input == "/exit":
 			out.Farewell("Goodbye!")
 			return nil
-		case input == "help":
-			out.Plain("Available commands: help, reset, exit")
+		case input == "/help":
 			cmds.usage()
-		case input == "reset":
+		case input == "/reset":
 			if assistant != nil {
 				assistant.Reset()
 			}

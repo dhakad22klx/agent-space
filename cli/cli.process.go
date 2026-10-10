@@ -16,7 +16,7 @@ Commands:
   help       Show this help
 
 Run justsay without a command to start the agent.
-Inside the agent, type help for integration commands.
+Inside the agent, type /help for integration commands.
 `
 
 type processCommands struct {

@@ -128,18 +128,18 @@ output; version tracking and binary updates will be implemented later.
 On startup, the terminal shows a panel with the selected model and saved
 integration status: Gmail authorization, Telegram pairing, and GitHub setup
 (currently not configured). Status is read locally; it is not a live service
-health check. Type `help` for integration setup commands. Narrow
+health check. Type `/help` for integration setup commands. Narrow
 terminals use a compact layout, and `NO_COLOR` disables panel colors.
 
 | Command | Description |
 | --- | --- |
-| `help` | Show built-in and integration commands. |
-| `reset` | Clear the current conversation. |
+| `/help` | Show built-in and integration commands. |
+| `/reset` | Clear the current conversation. |
 | `/on` | Enable real model calls (`MOCK_AGENT_CALL=false`). |
 | `/off` | Mock model calls (`MOCK_AGENT_CALL=true`). |
 | `/verify telegram` | Connect a Telegram bot to the running agent. |
 | `/verify gmail` | Authorize Gmail sending with Google OAuth 2.0. |
-| `exit` | Close the CLI. |
+| `/exit` | Close the CLI. |
 
 ## Integrations
 

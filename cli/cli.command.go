@@ -131,9 +131,11 @@ func (c *commands) verify(ctx context.Context, args []string) {
 // is only half of what the user needs.
 func (c *commands) usage() {
 	c.out.Plain("Commands:")
+	c.out.Plain("  /help — show built-in and integration commands")
 	c.out.Plain("  /on — send prompts to the model")
 	c.out.Plain("  /off — request does not reach the model")
-	c.out.Plain("  reset — reset the conversation")
+	c.out.Plain("  /reset — reset the conversation")
+	c.out.Plain("  /exit — close the CLI")
 	for _, target := range c.handlers {
 		c.out.Plain("  /verify " + target.name() + " — " + target.summary())
 	}

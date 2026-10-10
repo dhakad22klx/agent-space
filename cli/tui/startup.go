@@ -84,7 +84,7 @@ func startupPanel(model string, systems []IntegrationStatus, width int, color bo
 		line(fmt.Sprintf("%s  %-10s %s", marker, system.Name, system.Status), style)
 	}
 	border("├", "┤")
-	line("Saved status · help / reset / exit", Gray)
+	line("Saved status · /help /reset /exit", Gray)
 	border("╰", "╯")
 	b.WriteByte('\n')
 	return b.String()
